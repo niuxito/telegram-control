@@ -23,6 +23,10 @@ export class FileWatcher {
         /\.git/,
         /dist\//,
         /build\//,
+        /data\//,              // SQLite DB, WAL, SHM — internal bot state
+        /\.db$/,
+        /\.db-wal$/,
+        /\.db-shm$/,
       ],
       persistent: true,
       ignoreInitial: true,
