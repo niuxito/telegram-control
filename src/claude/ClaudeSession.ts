@@ -80,7 +80,7 @@ export class ClaudeSession {
           this.chatId,
           workingMsg.message_id,
           display + suffix,
-          { message_thread_id: this.topicId }
+          {}
         );
       } catch {
         // Ignore edit errors (message not modified, etc.)
