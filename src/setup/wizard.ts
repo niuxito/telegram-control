@@ -129,7 +129,7 @@ function checkClaudeCli(): CheckResult {
     label,
     status: 'error',
     message: 'not installed',
-    fix: 'Install:\n  npm install -g @anthropic-ai/claude-code\nThen authenticate (interactive):\n  claude login',
+    fix: 'Install (native installer):\n  curl -fsSL https://claude.ai/install.sh | bash\nThen authenticate (interactive):\n  claude login',
   };
 }
 
