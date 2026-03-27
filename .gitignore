@@ -1,0 +1,17 @@
+node_modules/
+dist/
+data/*.db
+data/*.db-wal
+data/*.db-shm
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+.DS_Store
+secrets.*
+credentials.*

@@ -1,0 +1,43 @@
+# systemd service file for Telegram Control Center on Raspberry Pi
+#
+# Installation:
+#   1. Edit the User= and WorkingDirectory= lines below to match your setup.
+#      Default assumes user "pi" and project cloned to /home/pi/telegram-control.
+#
+#   2. Copy this file to systemd:
+#        sudo cp scripts/telegram-control.service /etc/systemd/system/telegram-control.service
+#
+#   3. Reload systemd and enable the service:
+#        sudo systemctl daemon-reload
+#        sudo systemctl enable telegram-control
+#        sudo systemctl start telegram-control
+#
+#   4. Check status / logs:
+#        sudo systemctl status telegram-control
+#        sudo journalctl -u telegram-control -f
+#
+#   5. To stop / restart:
+#        sudo systemctl stop telegram-control
+#        sudo systemctl restart telegram-control
+
+[Unit]
+Description=Telegram Control Center
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Change "pi" to your actual Linux username if different
+User=pi
+# Change this path to wherever you cloned the project
+WorkingDirectory=/home/pi/telegram-control
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=telegram-control
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
