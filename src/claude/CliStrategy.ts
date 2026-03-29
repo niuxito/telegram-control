@@ -52,7 +52,7 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, {
       cwd,
-      env: { ...process.env },
+      env: { ...process.env, ANTHROPIC_API_KEY: undefined },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
