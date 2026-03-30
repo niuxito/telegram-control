@@ -1,8 +1,11 @@
 import type { Context } from 'grammy';
 import { InlineKeyboard } from 'grammy';
+import { extractTask, DEFAULT_WAKE_WORD } from './voice.js';
+import { resolveAgentPrompt, buildIssueTaskPrompt } from './agentIntent.js';
 import type { ProjectManager } from '../../projects/ProjectManager.js';
 import { getLatestSession } from '../../db/queries/sessions.js';
 import { getRecentTasks, getPendingTasks, cancelPendingTasks } from '../../db/queries/taskQueue.js';
+import { updateProject } from '../../db/queries/projects.js';
 import simpleGit from 'simple-git';
 import { readdirSync } from 'fs';
 import path from 'path';
@@ -436,5 +439,84 @@ export function setupProjectTopicHandlers(bot: any, projectManager: ProjectManag
   // /newsession
   bot.command('newsession', async (ctx: Context) => {
     await ctx.reply('🔄 New session will start on next /task command.');
+  });
+
+  // /alias [word] — set or show the wake word for this project topic
+  bot.command('alias', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const arg = (ctx.match as string).trim().toLowerCase();
+
+    if (!arg) {
+      const current = project.wakeWord ?? DEFAULT_WAKE_WORD;
+      await ctx.reply(`Current wake word: "${current}"${project.wakeWord ? '' : ' (default)'}`);
+      return;
+    }
+
+    if (arg.includes(' ') || arg.length > 32) {
+      await ctx.reply('Wake word must be a single word (max 32 chars).');
+      return;
+    }
+
+    updateProject(db, project.id, { wakeWord: arg });
+    await ctx.reply(`✅ Wake word set to "${arg}" for this project.`);
+  });
+
+  // /issue <description> — create a GitHub issue directly
+  bot.command('issue', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) {
+      await ctx.reply('This command must be used in a project topic.');
+      return;
+    }
+
+    const description = (ctx.match as string).trim();
+    if (!description) {
+      await ctx.reply('Usage: /issue <description>');
+      return;
+    }
+
+    const session = projectManager.getSession(project.id);
+    if (!session) {
+      await ctx.reply('Project session not found. Project may be paused or archived.');
+      return;
+    }
+
+    await session.queueTask(buildIssueTaskPrompt(description));
+    const pending = getPendingTasks(db, project.id);
+    if (pending.length > 1) {
+      await ctx.reply(`✅ Issue task queued (position ${pending.length}). Current task will finish first.`);
+    }
+  });
+
+  // Text in a project topic → queue as task if:
+  //   a) message is a reply to the bot, OR
+  //   b) text starts with the project's wake word (default: "agente")
+  bot.on('message:text', async (ctx: Context) => {
+    const text = ctx.message?.text;
+    if (!text || text.startsWith('/')) return;
+
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const isReplyToBot = ctx.message?.reply_to_message?.from?.id === ctx.me.id;
+    const wakeWord = project.wakeWord ?? DEFAULT_WAKE_WORD;
+    const taskFromWakeWord = extractTask(text, wakeWord);
+
+    const prompt = isReplyToBot ? text : taskFromWakeWord;
+    if (!prompt) return;
+
+    const session = projectManager.getSession(project.id);
+    if (!session) {
+      await ctx.reply('Project session not found. Project may be paused or archived.');
+      return;
+    }
+
+    await session.queueTask(resolveAgentPrompt(prompt));
+    const pending = getPendingTasks(db, project.id);
+    if (pending.length > 1) {
+      await ctx.reply(`✅ Task queued (position ${pending.length}). Current task will finish first.`);
+    }
   });
 }

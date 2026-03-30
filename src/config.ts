@@ -10,6 +10,8 @@ const envSchema = z.object({
   OWNER_USER_ID: z.string().min(1).transform(v => parseInt(v)),
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
+  API_PORT: z.string().default('3001').transform(v => parseInt(v)),
+  API_KEY: z.string().optional(),
   PROJECTS_BASE_DIR: z.string().default('~/projects'),
   DATA_DIR: z.string().default('./data'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),

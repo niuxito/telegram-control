@@ -9,6 +9,8 @@ import { setupGlobalCommands } from './bot/handlers/commands.js';
 import { setupNewProjectHandler } from './bot/handlers/newProject.js';
 import { setupProjectTopicHandlers } from './bot/handlers/projectTopic.js';
 import { setupCallbackHandlers } from './bot/handlers/callbacks.js';
+import { setupVoiceHandler } from './bot/handlers/voice.js';
+import { startApiServer } from './api/server.js';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -80,6 +82,9 @@ async function main() {
     console.log('[Startup] Tables created directly');
   }
 
+  // Schema evolution — idempotent column additions
+  try { sqlite.exec(`ALTER TABLE projects ADD COLUMN wake_word TEXT`); } catch { /* already exists */ }
+
   // 2. Create bot
   const bot = createBot();
 
@@ -95,11 +100,15 @@ async function main() {
   setupNewProjectHandler(bot, projectManager);
   setupProjectTopicHandlers(bot, projectManager, db);
   setupCallbackHandlers(bot, projectManager, db);
+  setupVoiceHandler(bot, projectManager, db);
 
-  // 6. Load active projects (starts watchers)
+  // 6. Start API server
+  startApiServer(projectManager, db, config.API_PORT, config.API_KEY);
+
+  // 7. Load active projects (starts watchers)
   await projectManager.loadActiveProjects();
 
-  // 7. Start bot
+  // 8. Start bot
   bot.catch((err) => {
     console.error('[Bot Error]', err);
   });

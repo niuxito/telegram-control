@@ -11,6 +11,7 @@ export const projects = sqliteTable('projects', {
   watchFiles: integer('watch_files', { mode: 'boolean' }).notNull().default(true),
   watchGit: integer('watch_git', { mode: 'boolean' }).notNull().default(true),
   gitCheckAt: integer('git_check_at', { mode: 'timestamp' }),
+  wakeWord: text('wake_word'),
 });
 
 export const claudeSessions = sqliteTable('claude_sessions', {

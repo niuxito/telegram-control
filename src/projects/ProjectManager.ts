@@ -51,7 +51,8 @@ export class ProjectManager {
       project.id,
       expandPath(project.localPath),
       project.topicId,
-      config.SUPERGROUP_ID
+      config.SUPERGROUP_ID,
+      project.name
     );
     this.sessions.set(project.id, session);
 

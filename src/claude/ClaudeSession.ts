@@ -3,7 +3,13 @@ import { getLatestSession, insertSession, updateSession } from '../db/queries/se
 import { insertTask, updateTask, getRunningTask, getPendingTasks } from '../db/queries/taskQueue.js';
 import { runCliTask } from './CliStrategy.js';
 import { formatLimitError } from '../notifications/formatters.js';
+import { agentEvents } from '../api/events.js';
 import type { Bot } from 'grammy';
+
+/** Remove backtick wrapping around URLs so Telegram renders them as clickable links. */
+function unwrapUrlsFromCode(text: string): string {
+  return text.replace(/`(https?:\/\/[^\s`]+)`/g, '$1');
+}
 
 export class ClaudeSession {
   private db: Db;
@@ -13,14 +19,21 @@ export class ClaudeSession {
   private topicId: number;
   private chatId: number;
   private processing = false;
+  private projectName = '';
+  private liveOutput = '';
 
-  constructor(db: Db, bot: Bot, projectId: number, projectPath: string, topicId: number, chatId: number) {
+  constructor(db: Db, bot: Bot, projectId: number, projectPath: string, topicId: number, chatId: number, projectName = '') {
     this.db = db;
     this.bot = bot;
     this.projectId = projectId;
     this.projectPath = projectPath;
     this.topicId = topicId;
     this.chatId = chatId;
+    this.projectName = projectName;
+  }
+
+  getLiveOutput(): string {
+    return this.liveOutput;
   }
 
   async queueTask(prompt: string): Promise<number> {
@@ -52,6 +65,8 @@ export class ClaudeSession {
 
   private async runTask(taskId: number, prompt: string) {
     updateTask(this.db, taskId, { status: 'running' });
+    this.liveOutput = '';
+    agentEvents.emit('agent', { type: 'task:started', agentId: this.projectId, agentName: this.projectName, taskId, prompt });
 
     const session = getLatestSession(this.db, this.projectId);
 
@@ -73,17 +88,28 @@ export class ClaudeSession {
       if (!isFinal && now - lastEdit < EDIT_DEBOUNCE_MS) return;
       lastEdit = now;
 
-      const display = text.length > 4000 ? '...' + text.slice(-3997) : text;
+      const processed = unwrapUrlsFromCode(text);
+      const display = processed.length > 4000 ? '...' + processed.slice(-3997) : processed;
       const suffix = isFinal ? '' : ' ●';
       try {
         await this.bot.api.editMessageText(
           this.chatId,
           workingMsg.message_id,
           display + suffix,
-          {}
+          { parse_mode: 'Markdown' }
         );
       } catch {
-        // Ignore edit errors (message not modified, etc.)
+        // Retry as plain text if Markdown parsing fails (e.g. unmatched symbols)
+        try {
+          await this.bot.api.editMessageText(
+            this.chatId,
+            workingMsg.message_id,
+            display + suffix,
+            {}
+          );
+        } catch {
+          // Ignore edit errors (message not modified, etc.)
+        }
       }
     };
 
@@ -111,6 +137,8 @@ export class ClaudeSession {
         },
         onTextChunk: (_chunk, accumulated) => {
           accumulatedText = accumulated;
+          this.liveOutput = accumulated;
+          agentEvents.emit('agent', { type: 'task:output', agentId: this.projectId, agentName: this.projectName, text: accumulated });
           if (editTimer) clearTimeout(editTimer);
           editTimer = setTimeout(() => editMessage(accumulatedText), EDIT_DEBOUNCE_MS);
         },
@@ -154,7 +182,7 @@ export class ClaudeSession {
       const costPart = result.costUsd > 0 ? `💰 $${result.costUsd.toFixed(4)} | ` : '';
       const footer = `\n\n---\n${costPart}🛠 Tools: ${toolSummary || 'none'} | 💾 Session saved`;
 
-      const finalText = result.result || accumulatedText;
+      const finalText = unwrapUrlsFromCode(result.result || accumulatedText);
 
       if (finalText.length + footer.length > 4000) {
         // Split into multiple messages
@@ -166,6 +194,7 @@ export class ClaudeSession {
           remaining = remaining.slice(4096);
           await this.bot.api.sendMessage(this.chatId, chunk, {
             message_thread_id: this.topicId,
+            parse_mode: 'Markdown',
           });
         }
         await this.bot.api.sendMessage(this.chatId, footer.trim(), {
@@ -192,6 +221,11 @@ export class ClaudeSession {
         costUsd: result.costUsd,
         completedAt: new Date(),
       });
+      this.liveOutput = '';
+      agentEvents.emit('agent', result.success
+        ? { type: 'task:completed', agentId: this.projectId, agentName: this.projectName, taskId, costUsd: result.costUsd }
+        : { type: 'task:failed',    agentId: this.projectId, agentName: this.projectName, taskId }
+      );
     } catch (err) {
       if (editTimer) clearTimeout(editTimer);
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -203,6 +237,8 @@ export class ClaudeSession {
         result: errorMsg,
         completedAt: new Date(),
       });
+      this.liveOutput = '';
+      agentEvents.emit('agent', { type: 'task:failed', agentId: this.projectId, agentName: this.projectName, taskId });
     }
   }
 
