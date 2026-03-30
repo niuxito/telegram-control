@@ -36,6 +36,7 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
   const args = [
     '-p', prompt,
     '--output-format', 'stream-json',
+    '--verbose',
     '--include-partial-messages',
     // SECURITY NOTE: --dangerously-skip-permissions bypasses ALL Claude Code permission confirmations,
     // including file reads, writes, shell command execution, and network requests. Claude runs with
