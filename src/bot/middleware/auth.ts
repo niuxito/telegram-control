@@ -1,22 +1,30 @@
 import type { Context, NextFunction } from 'grammy';
 import { config } from '../../config.js';
+import { getGuest } from '../../db/queries/guests.js';
+import type { Db } from '../../db/client.js';
 
-export async function authMiddleware(ctx: Context, next: NextFunction): Promise<void> {
-  const userId = ctx.from?.id;
+export function createAuthMiddleware(db: Db) {
+  return async (ctx: Context, next: NextFunction): Promise<void> => {
+    const userId = ctx.from?.id;
 
-  // SECURITY: Silently ignore all requests from users other than the owner.
-  // Replying would leak the bot's existence to unauthorized users.
-  if (userId !== config.OWNER_USER_ID) {
-    return;
-  }
+    // Owner always has full access
+    if (userId === config.OWNER_USER_ID) {
+      await next();
+      return;
+    }
 
-  // SECURITY: Only process messages/callbacks from the configured supergroup,
-  // or from callback queries that originate from inline keyboards posted in that chat.
-  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat?.id;
-  if (chatId !== undefined && chatId !== config.SUPERGROUP_ID) {
-    // Silently ignore messages from other chats
-    return;
-  }
+    // SECURITY: Only process messages from the configured supergroup
+    const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat?.id;
+    if (chatId !== undefined && chatId !== config.SUPERGROUP_ID) {
+      return;
+    }
 
-  await next();
+    // Registered guests get read-only access
+    if (userId !== undefined && getGuest(db, userId)) {
+      await next();
+      return;
+    }
+
+    // SECURITY: Silently ignore all other users
+  };
 }

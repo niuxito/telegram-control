@@ -4,7 +4,8 @@ import { createDb } from './db/client.js';
 import { createBot } from './bot/bot.js';
 import { ProjectManager } from './projects/ProjectManager.js';
 import { createRouter } from './bot/router.js';
-import { authMiddleware } from './bot/middleware/auth.js';
+import { createAuthMiddleware } from './bot/middleware/auth.js';
+import { guestGuard } from './bot/middleware/guestGuard.js';
 import { setupGlobalCommands } from './bot/handlers/commands.js';
 import { setupNewProjectHandler } from './bot/handlers/newProject.js';
 import { setupProjectTopicHandlers } from './bot/handlers/projectTopic.js';
@@ -78,12 +79,20 @@ async function main() {
         sent_at INTEGER NOT NULL,
         telegram_message_id INTEGER
       );
+
+      CREATE TABLE IF NOT EXISTS guests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL UNIQUE,
+        note TEXT,
+        added_at INTEGER NOT NULL
+      );
     `);
     console.log('[Startup] Tables created directly');
   }
 
-  // Schema evolution — idempotent column additions
+  // Schema evolution — idempotent column additions and table creation
   try { sqlite.exec(`ALTER TABLE projects ADD COLUMN wake_word TEXT`); } catch { /* already exists */ }
+  try { sqlite.exec(`CREATE TABLE IF NOT EXISTS guests (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL UNIQUE, note TEXT, added_at INTEGER NOT NULL)`); } catch { /* already exists */ }
 
   // 2. Create bot
   const bot = createBot();
@@ -92,11 +101,12 @@ async function main() {
   const projectManager = new ProjectManager(db, bot);
 
   // 4. Setup middleware
-  bot.use(authMiddleware);
+  bot.use(createAuthMiddleware(db));
+  bot.use(guestGuard);
   bot.use(createRouter(projectManager));
 
   // 5. Setup handlers
-  setupGlobalCommands(bot, projectManager);
+  setupGlobalCommands(bot, projectManager, db);
   setupNewProjectHandler(bot, projectManager);
   setupProjectTopicHandlers(bot, projectManager, db);
   setupCallbackHandlers(bot, projectManager, db);

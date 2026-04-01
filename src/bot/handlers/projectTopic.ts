@@ -7,8 +7,9 @@ import { getLatestSession } from '../../db/queries/sessions.js';
 import { getRecentTasks, getPendingTasks, cancelPendingTasks } from '../../db/queries/taskQueue.js';
 import { updateProject } from '../../db/queries/projects.js';
 import simpleGit from 'simple-git';
-import { readdirSync } from 'fs';
+import { readdirSync, readFileSync } from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
 import type { Db } from '../../db/client.js';
 
 // Pending public-repo confirmations keyed by userId
@@ -98,6 +99,49 @@ export function buildGithubPrompt(name: string, visibility: 'private' | 'public'
     `   - If a remote already exists, show the current remote URL instead.\n\n` +
     `Report the results of each step clearly.`
   );
+}
+
+const TEST_TIMEOUT_MS = 120_000;
+const MAX_OUTPUT_CHARS = 3800;
+
+function runProjectTests(cwd: string, _script: string): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn('npm', ['test', '--', '--reporter=verbose'], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, CI: '1', FORCE_COLOR: '0' },
+    });
+
+    let output = '';
+    const append = (chunk: Buffer) => { output += chunk.toString(); };
+    child.stdout.on('data', append);
+    child.stderr.on('data', append);
+
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(formatTestOutput(output, null, true));
+    }, TEST_TIMEOUT_MS);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(formatTestOutput(output, code, false));
+    });
+  });
+}
+
+function formatTestOutput(raw: string, code: number | null, timedOut: boolean): string {
+  const header = timedOut
+    ? '⏱ Tests timed out after 120s\n\n'
+    : code === 0
+      ? '✅ Tests passed\n\n'
+      : `❌ Tests failed (exit ${code})\n\n`;
+
+  // Keep last MAX_OUTPUT_CHARS chars to capture failures (usually at the end)
+  const trimmed = raw.length > MAX_OUTPUT_CHARS
+    ? `...(truncated)\n${raw.slice(-MAX_OUTPUT_CHARS)}`
+    : raw;
+
+  return header + trimmed;
 }
 
 export function setupProjectTopicHandlers(bot: any, projectManager: ProjectManager, db: Db): void {
@@ -488,6 +532,31 @@ export function setupProjectTopicHandlers(bot: any, projectManager: ProjectManag
     if (pending.length > 1) {
       await ctx.reply(`✅ Issue task queued (position ${pending.length}). Current task will finish first.`);
     }
+  });
+
+  // /test — run project tests and report result
+  bot.command('test', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    // Detect test script from package.json
+    let testScript = 'npm test';
+    try {
+      const pkg = JSON.parse(readFileSync(path.join(project.localPath, 'package.json'), 'utf-8'));
+      if (!pkg.scripts?.test) {
+        await ctx.reply('No test script found in package.json.');
+        return;
+      }
+    } catch {
+      // No package.json — try running npm test anyway, error will surface
+    }
+
+    const msg = await ctx.reply('🧪 Running tests...');
+    const chatId = ctx.chat!.id;
+    const msgId = msg.message_id;
+
+    const output = await runProjectTests(project.localPath, testScript);
+    await ctx.api.editMessageText(chatId, msgId, output);
   });
 
   // Text in a project topic → queue as task if:

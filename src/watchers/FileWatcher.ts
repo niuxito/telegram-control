@@ -18,15 +18,26 @@ export class FileWatcher {
   start(): void {
     this.watcher = chokidar.watch(this.dir, {
       ignored: [
-        /(^|[\/\\])\../,       // dotfiles
+        /(^|[\/\\])\../,       // dotfiles / hidden dirs
         /node_modules/,
         /\.git/,
         /dist\//,
         /build\//,
+        /\.next\//,
+        /\.nuxt\//,
+        /\.cache\//,
+        /coverage\//,
+        /\.turbo\//,
         /data\//,              // SQLite DB, WAL, SHM — internal bot state
         /\.db$/,
         /\.db-wal$/,
         /\.db-shm$/,
+        /\.log$/,              // log files
+        /\.tmp$/,              // generic temp files
+        /\.tmp\./,             // editor temp files (e.g. file.ts.tmp.1234.5678)
+        /~$/,                  // editor swap/backup files
+        /\.swp$/,
+        /\.swo$/,
       ],
       persistent: true,
       ignoreInitial: true,

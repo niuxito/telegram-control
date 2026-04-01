@@ -150,6 +150,7 @@ describe('confirm_github_public callback', () => {
       command: (name: string, handler: Function) => {
         commandHandlers[name] = handler;
       },
+      on: () => {},
     };
 
     const session = makeSession(projectId);
@@ -198,6 +199,7 @@ describe('confirm_github_public callback', () => {
       command: (name: string, handler: Function) => {
         commandHandlers[name] = handler;
       },
+      on: () => {},
     };
 
     const session = makeSession(projectId);
@@ -293,6 +295,7 @@ describe('cancel_github_public callback', () => {
       command: (name: string, handler: Function) => {
         commandHandlers[name] = handler;
       },
+      on: () => {},
     };
 
     projectManager.getByTopicId = vi.fn().mockReturnValue({
@@ -380,6 +383,7 @@ describe('confirm_vercel_deploy callback', () => {
       command: (name: string, handler: Function) => {
         commandHandlers[name] = handler;
       },
+      on: () => {},
     };
 
     const session = makeSession(projectId);
@@ -424,6 +428,7 @@ describe('confirm_vercel_deploy callback', () => {
       command: (name: string, handler: Function) => {
         commandHandlers[name] = handler;
       },
+      on: () => {},
     };
 
     const session = makeSession(projectId);
@@ -515,6 +520,7 @@ describe('cancel_vercel_deploy callback', () => {
       command: (name: string, handler: Function) => {
         commandHandlers[name] = handler;
       },
+      on: () => {},
     };
 
     projectManager.getByTopicId = vi.fn().mockReturnValue({

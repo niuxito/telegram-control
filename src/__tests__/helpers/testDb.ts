@@ -22,7 +22,8 @@ export function createTestDb() {
       archived_at INTEGER,
       watch_files INTEGER NOT NULL DEFAULT 1,
       watch_git INTEGER NOT NULL DEFAULT 1,
-      git_check_at INTEGER
+      git_check_at INTEGER,
+      wake_word TEXT
     );
 
     CREATE TABLE IF NOT EXISTS claude_sessions (
@@ -54,6 +55,13 @@ export function createTestDb() {
       payload TEXT NOT NULL,
       sent_at INTEGER NOT NULL,
       telegram_message_id INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS guests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE,
+      note TEXT,
+      added_at INTEGER NOT NULL
     );
   `);
 

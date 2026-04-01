@@ -91,6 +91,7 @@ export class ClaudeSession {
       const processed = unwrapUrlsFromCode(text);
       const display = processed.length > 4000 ? '...' + processed.slice(-3997) : processed;
       const suffix = isFinal ? '' : ' ●';
+      let editSucceeded = false;
       try {
         await this.bot.api.editMessageText(
           this.chatId,
@@ -98,6 +99,7 @@ export class ClaudeSession {
           display + suffix,
           { parse_mode: 'Markdown' }
         );
+        editSucceeded = true;
       } catch {
         // Retry as plain text if Markdown parsing fails (e.g. unmatched symbols)
         try {
@@ -107,13 +109,48 @@ export class ClaudeSession {
             display + suffix,
             {}
           );
+          editSucceeded = true;
         } catch {
           // Ignore edit errors (message not modified, etc.)
+        }
+      }
+      // For final messages: if edit failed (e.g. rate-limited), send as a new message
+      // so the result is always delivered to the user.
+      if (isFinal && !editSucceeded) {
+        try {
+          await this.bot.api.sendMessage(this.chatId, display + suffix, {
+            message_thread_id: this.topicId,
+          });
+        } catch {
+          // Best-effort
         }
       }
     };
 
     let editTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Heartbeat: for long-running tasks, send a periodic update every 30s so the
+    // user knows the task is still alive and to keep the Telegram session warm.
+    const taskStartTime = Date.now();
+    const heartbeatTimer = setInterval(async () => {
+      const elapsedSec = Math.round((Date.now() - taskStartTime) / 1000);
+      const preview = accumulatedText.length > 200
+        ? '...' + accumulatedText.slice(-200)
+        : accumulatedText;
+      const heartbeatText = preview
+        ? `${preview} ●\n\n⏳ Still working... (${elapsedSec}s)`
+        : `⏳ Still working... (${elapsedSec}s)`;
+      try {
+        await this.bot.api.editMessageText(
+          this.chatId,
+          workingMsg.message_id,
+          heartbeatText,
+        );
+        lastEdit = Date.now();
+      } catch {
+        // Ignore heartbeat edit errors
+      }
+    }, 30_000);
 
     try {
       const result = await runCliTask({
@@ -148,6 +185,7 @@ export class ClaudeSession {
       });
 
       if (editTimer) clearTimeout(editTimer);
+      clearInterval(heartbeatTimer);
 
       // Detect rate/usage limit errors before rendering the final message
       const isLimitError = !result.success &&
@@ -228,6 +266,7 @@ export class ClaudeSession {
       );
     } catch (err) {
       if (editTimer) clearTimeout(editTimer);
+      clearInterval(heartbeatTimer);
       const errorMsg = err instanceof Error ? err.message : String(err);
       // SECURITY: log the full error server-side but do not expose internal details to Telegram
       console.error(`[ClaudeSession] Task ${taskId} failed:`, err);

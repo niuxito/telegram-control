@@ -50,6 +50,8 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
     args.push('--resume', sessionId);
   }
 
+  const TASK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, {
       cwd,
@@ -64,7 +66,29 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
     let initSessionId = sessionId ?? '';
     let stderrBuffer = '';
 
+    // Inactivity timeout: reset on every stdout/stderr chunk.
+    // This allows complex long-running tasks to complete as long as Claude
+    // keeps producing output, but kills truly hung processes.
+    let timeoutHandle = setTimeout(onTimeout, TASK_TIMEOUT_MS);
+    function resetTimeout() {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = setTimeout(onTimeout, TASK_TIMEOUT_MS);
+    }
+    function onTimeout() {
+      child.kill('SIGTERM');
+      resolve({
+        success: false,
+        sessionId: initSessionId,
+        costUsd: 0,
+        result: accumulatedText,
+        error: 'Task timed out after 10 minutes of inactivity',
+        errorType: 'unknown',
+        toolsUsed,
+      });
+    }
+
     child.stdout.on('data', (chunk: Buffer) => {
+      resetTimeout();
       buffer += chunk.toString();
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
@@ -78,12 +102,14 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
     });
 
     child.stderr.on('data', (chunk: Buffer) => {
+      resetTimeout();
       const text = chunk.toString();
       stderrBuffer += text;
       console.error('[claude stderr]', text);
     });
 
     child.on('close', (code) => {
+      clearTimeout(timeoutHandle);
       // Process remaining buffer
       if (buffer.trim()) {
         const events = parseLineDetailed(buffer);

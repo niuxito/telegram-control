@@ -36,6 +36,13 @@ export const taskQueue = sqliteTable('task_queue', {
   completedAt: integer('completed_at', { mode: 'timestamp' }),
 });
 
+export const guests = sqliteTable('guests', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull().unique(),
+  note: text('note'),
+  addedAt: integer('added_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+});
+
 export const notificationLog = sqliteTable('notification_log', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   projectId: integer('project_id').notNull().references(() => projects.id),
