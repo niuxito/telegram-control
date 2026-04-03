@@ -53,11 +53,14 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
   const TASK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
   return new Promise((resolve, reject) => {
+    console.log(`[CliStrategy] Spawning claude, cwd=${cwd}, sessionId=${sessionId ?? 'none'}`);
     const child = spawn('claude', args, {
       cwd,
       env: { ...process.env, ANTHROPIC_API_KEY: undefined },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    child.on('spawn', () => console.log(`[CliStrategy] Process spawned, pid=${child.pid}`));
+    child.on('error', (err) => console.error(`[CliStrategy] Process error:`, err.message));
 
     let buffer = '';
     let accumulatedText = '';
@@ -75,6 +78,7 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
       timeoutHandle = setTimeout(onTimeout, TASK_TIMEOUT_MS);
     }
     function onTimeout() {
+      console.error(`[CliStrategy] Inactivity timeout after ${TASK_TIMEOUT_MS/1000}s, killing process pid=${child.pid}`);
       child.kill('SIGTERM');
       resolve({
         success: false,
@@ -109,6 +113,7 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
     });
 
     child.on('close', (code) => {
+      console.log(`[CliStrategy] Process closed, code=${code}, hasResult=${!!resultEvent}, accumulated=${accumulatedText.length}chars`);
       clearTimeout(timeoutHandle);
       // Process remaining buffer
       if (buffer.trim()) {

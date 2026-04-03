@@ -12,6 +12,7 @@ import { setupProjectTopicHandlers } from './bot/handlers/projectTopic.js';
 import { setupCallbackHandlers } from './bot/handlers/callbacks.js';
 import { setupVoiceHandler } from './bot/handlers/voice.js';
 import { startApiServer } from './api/server.js';
+import { ScheduleManager } from './projects/ScheduleManager.js';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -80,6 +81,36 @@ async function main() {
         telegram_message_id INTEGER
       );
 
+      CREATE TABLE IF NOT EXISTS local_issues (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id),
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at INTEGER NOT NULL,
+        closed_at INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS schedules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id),
+        cron_expr TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        last_run_at INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS access_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL UNIQUE,
+        username TEXT,
+        full_name TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        requested_at INTEGER NOT NULL,
+        resolved_at INTEGER
+      );
+
       CREATE TABLE IF NOT EXISTS guests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL UNIQUE,
@@ -92,6 +123,9 @@ async function main() {
 
   // Schema evolution — idempotent column additions and table creation
   try { sqlite.exec(`ALTER TABLE projects ADD COLUMN wake_word TEXT`); } catch { /* already exists */ }
+  try { sqlite.exec(`CREATE TABLE IF NOT EXISTS local_issues (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created_at INTEGER NOT NULL, closed_at INTEGER)`); } catch { /* already exists */ }
+  try { sqlite.exec(`CREATE TABLE IF NOT EXISTS schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), cron_expr TEXT NOT NULL, prompt TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, last_run_at INTEGER)`); } catch { /* already exists */ }
+  try { sqlite.exec(`CREATE TABLE IF NOT EXISTS access_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL UNIQUE, username TEXT, full_name TEXT, status TEXT NOT NULL DEFAULT 'pending', requested_at INTEGER NOT NULL, resolved_at INTEGER)`); } catch { /* already exists */ }
   try { sqlite.exec(`CREATE TABLE IF NOT EXISTS guests (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL UNIQUE, note TEXT, added_at INTEGER NOT NULL)`); } catch { /* already exists */ }
 
   // 2. Create bot
@@ -106,9 +140,10 @@ async function main() {
   bot.use(createRouter(projectManager));
 
   // 5. Setup handlers
+  const scheduleManager = new ScheduleManager(db, projectManager);
   setupGlobalCommands(bot, projectManager, db);
   setupNewProjectHandler(bot, projectManager);
-  setupProjectTopicHandlers(bot, projectManager, db);
+  setupProjectTopicHandlers(bot, projectManager, db, scheduleManager);
   setupCallbackHandlers(bot, projectManager, db);
   setupVoiceHandler(bot, projectManager, db);
 
@@ -118,7 +153,10 @@ async function main() {
   // 7. Load active projects (starts watchers)
   await projectManager.loadActiveProjects();
 
-  // 8. Start bot
+  // 8. Start schedule manager
+  scheduleManager.start();
+
+  // 9. Start bot
   bot.catch((err) => {
     console.error('[Bot Error]', err);
   });

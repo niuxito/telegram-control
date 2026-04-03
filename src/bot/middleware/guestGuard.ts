@@ -15,6 +15,12 @@ export async function guestGuard(ctx: Context, next: NextFunction): Promise<void
     return;
   }
 
+  // Allow /requestaccess for everyone (handled before auth blocks)
+  if (ctx.message?.text?.startsWith('/requestaccess')) {
+    await next();
+    return;
+  }
+
   // For guests: block write commands
   if (ctx.message?.text?.startsWith('/')) {
     const cmd = ctx.message.text.slice(1).split(/[\s@]/)[0].toLowerCase();

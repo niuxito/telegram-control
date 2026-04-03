@@ -1,16 +1,44 @@
 import type { Context } from 'grammy';
 import { InlineKeyboard } from 'grammy';
 import { extractTask, DEFAULT_WAKE_WORD } from './voice.js';
-import { resolveAgentPrompt, buildIssueTaskPrompt } from './agentIntent.js';
+import { resolveAgentPrompt, buildPlanningIssuePrompt } from './agentIntent.js';
 import type { ProjectManager } from '../../projects/ProjectManager.js';
 import { getLatestSession } from '../../db/queries/sessions.js';
-import { getRecentTasks, getPendingTasks, cancelPendingTasks } from '../../db/queries/taskQueue.js';
+import { getRecentTasks, getPendingTasks, cancelPendingTasks, getTaskById } from '../../db/queries/taskQueue.js';
 import { updateProject } from '../../db/queries/projects.js';
+import { insertSchedule, getSchedulesByProject, deleteSchedule, setScheduleEnabled } from '../../db/queries/schedules.js';
+import { insertLocalIssue, listLocalIssues, closeLocalIssue } from '../../db/queries/localIssues.js';
+import type { ScheduleManager } from '../../projects/ScheduleManager.js';
+import cron from 'node-cron';
 import simpleGit from 'simple-git';
 import { readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import type { Db } from '../../db/client.js';
+
+// Pending issue-without-github confirmations keyed by userId
+const pendingIssueRequest = new Map<number, { projectId: number; description: string }>();
+
+export function getPendingIssueRequest(userId: number) {
+  return pendingIssueRequest.get(userId);
+}
+export function clearPendingIssueRequest(userId: number) {
+  pendingIssueRequest.delete(userId);
+}
+
+/** Returns the GitHub remote URL if found, otherwise null. */
+async function getGithubRemote(projectPath: string): Promise<string | null> {
+  try {
+    const git = simpleGit(projectPath);
+    const remotes = await git.getRemotes(true);
+    const gh = remotes.find(r =>
+      r.refs.fetch?.includes('github.com') || r.refs.push?.includes('github.com')
+    );
+    return gh?.refs.fetch ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // Pending public-repo confirmations keyed by userId
 const pendingGithubPublic = new Map<number, { projectId: number; projectName: string }>();
@@ -144,7 +172,7 @@ function formatTestOutput(raw: string, code: number | null, timedOut: boolean): 
   return header + trimmed;
 }
 
-export function setupProjectTopicHandlers(bot: any, projectManager: ProjectManager, db: Db): void {
+export function setupProjectTopicHandlers(bot: any, projectManager: ProjectManager, db: Db, scheduleManager?: ScheduleManager): void {
 
   // /task <prompt>
   bot.command('task', async (ctx: Context) => {
@@ -507,7 +535,7 @@ export function setupProjectTopicHandlers(bot: any, projectManager: ProjectManag
     await ctx.reply(`✅ Wake word set to "${arg}" for this project.`);
   });
 
-  // /issue <description> — create a GitHub issue directly
+  // /issue [create <desc> | list [open|closed] | close <id>]
   bot.command('issue', async (ctx: Context) => {
     const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
     if (!project) {
@@ -515,9 +543,62 @@ export function setupProjectTopicHandlers(bot: any, projectManager: ProjectManag
       return;
     }
 
-    const description = (ctx.match as string).trim();
+    const raw = (ctx.match as string).trim();
+    const args = raw.split(/\s+/);
+    const sub = args[0]?.toLowerCase();
+
+    // /issue list [open|closed]
+    if (sub === 'list') {
+      const filter = (args[1] === 'closed' ? 'closed' : 'open') as 'open' | 'closed';
+      const githubRemote = await getGithubRemote(project.localPath);
+      const session = projectManager.getSession(project.id);
+      if (githubRemote && session) {
+        await session.queueTask(
+          `List the ${filter} GitHub issues for this project.\n` +
+          `Run: gh issue list --state ${filter} --limit 20\n` +
+          `Format the output as a numbered list with title and issue number.`
+        );
+      } else {
+        const issues = listLocalIssues(db, project.id, filter);
+        if (issues.length === 0) {
+          await ctx.reply(`No ${filter} issues found.`);
+          return;
+        }
+        const lines = issues.map(i =>
+          `#${i.id} ${i.title}\n   ${i.body.slice(0, 80)}${i.body.length > 80 ? '…' : ''}`
+        ).join('\n\n');
+        await ctx.reply(`Local issues (${filter}):\n\n${lines}`);
+      }
+      return;
+    }
+
+    // /issue close <id>
+    if (sub === 'close') {
+      const id = parseInt(args[1]);
+      if (isNaN(id)) {
+        await ctx.reply('Usage: /issue close <id>');
+        return;
+      }
+      const githubRemote = await getGithubRemote(project.localPath);
+      const session = projectManager.getSession(project.id);
+      if (githubRemote && session) {
+        await session.queueTask(`Close GitHub issue #${id}: run gh issue close ${id} and confirm.`);
+      } else {
+        closeLocalIssue(db, id, project.id);
+        await ctx.reply(`✅ Issue #${id} closed.`);
+      }
+      return;
+    }
+
+    // /issue <description>  or  /issue create <description>
+    const description = sub === 'create' ? args.slice(1).join(' ').trim() : raw;
     if (!description) {
-      await ctx.reply('Usage: /issue <description>');
+      await ctx.reply(
+        'Usage:\n' +
+        '/issue <description> — create issue\n' +
+        '/issue list [open|closed] — list issues\n' +
+        '/issue close <id> — close an issue'
+      );
       return;
     }
 
@@ -527,11 +608,193 @@ export function setupProjectTopicHandlers(bot: any, projectManager: ProjectManag
       return;
     }
 
-    await session.queueTask(buildIssueTaskPrompt(description));
-    const pending = getPendingTasks(db, project.id);
-    if (pending.length > 1) {
-      await ctx.reply(`✅ Issue task queued (position ${pending.length}). Current task will finish first.`);
+    const githubRemote = await getGithubRemote(project.localPath);
+
+    if (githubRemote) {
+      // GitHub configured — queue planning agent task
+      await session.queueTask(buildPlanningIssuePrompt(description, true));
+      const pending = getPendingTasks(db, project.id);
+      if (pending.length > 1) {
+        await ctx.reply(`✅ Issue task queued (position ${pending.length}).`);
+      } else {
+        await ctx.reply('✅ Planning agent started — analysing codebase and creating issue...');
+      }
+    } else {
+      // No GitHub remote — ask user what to do
+      const userId = ctx.from?.id;
+      if (!userId) return;
+      pendingIssueRequest.set(userId, { projectId: project.id, description });
+      const keyboard = new InlineKeyboard()
+        .text('Create GitHub repo first', `setup_github_for_issue:${userId}`)
+        .row()
+        .text('Store locally', `local_issue:${userId}`);
+      await ctx.reply(
+        'No GitHub remote found for this project. What would you like to do?',
+        { reply_markup: keyboard }
+      );
     }
+  });
+
+  // /tasklist [n] — show last N tasks (default 10)
+  bot.command('tasklist', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const n = Math.min(parseInt((ctx.match as string) || '10') || 10, 50);
+    const tasks = getRecentTasks(db, project.id, n);
+    if (tasks.length === 0) {
+      await ctx.reply('No tasks found.');
+      return;
+    }
+
+    const statusIcon: Record<string, string> = {
+      completed: '✅', failed: '❌', cancelled: '🚫', running: '⏳', pending: '🕐',
+    };
+    const lines = tasks.map(t => {
+      const icon = statusIcon[t.status] ?? '•';
+      const date = t.createdAt ? new Date(t.createdAt).toISOString().slice(11, 16) : '';
+      const prompt = t.prompt.slice(0, 60) + (t.prompt.length > 60 ? '…' : '');
+      const cost = t.costUsd ? ` $${t.costUsd.toFixed(4)}` : '';
+      return `${icon} [${t.id}] ${date} ${prompt}${cost}`;
+    }).join('\n');
+    await ctx.reply(`Tasks (last ${tasks.length}):\n${lines}`);
+  });
+
+  // /tasklog <id> — full output of a specific task
+  bot.command('tasklog', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const id = parseInt((ctx.match as string) || '');
+    if (isNaN(id)) {
+      await ctx.reply('Usage: /tasklog <id>');
+      return;
+    }
+
+    const task = getTaskById(db, id);
+    if (!task || task.projectId !== project.id) {
+      await ctx.reply(`Task ${id} not found.`);
+      return;
+    }
+
+    const statusIcon: Record<string, string> = {
+      completed: '✅', failed: '❌', cancelled: '🚫', running: '⏳', pending: '🕐',
+    };
+    const icon = statusIcon[task.status] ?? '•';
+    const date = task.createdAt ? new Date(task.createdAt).toLocaleString() : '';
+    const cost = task.costUsd ? `$${task.costUsd.toFixed(4)}` : 'n/a';
+    const header = `${icon} Task ${task.id} — ${task.status}\n${date} | cost: ${cost}\n\nPrompt: ${task.prompt}\n\n`;
+
+    const output = task.result ?? '(no output)';
+    const full = header + output;
+
+    if (full.length > 4096) {
+      await ctx.reply(header + output.slice(0, 4096 - header.length - 3) + '…');
+    } else {
+      await ctx.reply(full);
+    }
+  });
+
+  // /schedule add <cron> <prompt> | /schedule list | /schedule remove <id> | /schedule on|off <id>
+  bot.command('schedule', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const args = ((ctx.match as string) || '').trim().split(/\s+/);
+    const sub = args[0]?.toLowerCase();
+
+    if (sub === 'list') {
+      const all = getSchedulesByProject(db, project.id);
+      if (all.length === 0) {
+        await ctx.reply('No schedules configured. Use /schedule add <cron> <prompt>');
+        return;
+      }
+      const lines = all.map(s => {
+        const status = s.enabled ? '✅' : '⏸';
+        const last = s.lastRunAt ? new Date(s.lastRunAt).toISOString().slice(0, 16).replace('T', ' ') : 'never';
+        return `${status} [${s.id}] ${s.cronExpr}\n   ${s.prompt.slice(0, 60)}${s.prompt.length > 60 ? '…' : ''}\n   Last run: ${last}`;
+      }).join('\n\n');
+      await ctx.reply(`Schedules:\n\n${lines}`);
+      return;
+    }
+
+    if (sub === 'add') {
+      // Format: /schedule add <cron 5 fields> <prompt...>
+      // e.g. /schedule add 0 9 * * 1 Run weekly report
+      if (args.length < 7) {
+        await ctx.reply('Usage: /schedule add <cron> <prompt>\nExample: /schedule add "0 9 * * 1" Run weekly lint');
+        return;
+      }
+      // Support quoted cron or 5 separate fields
+      let cronExpr: string;
+      let promptStart: number;
+      const joined = args.slice(1).join(' ');
+      const quoted = joined.match(/^"([^"]+)"\s+([\s\S]+)$/);
+      if (quoted) {
+        cronExpr = quoted[1];
+        promptStart = -1; // handled via quoted
+      } else {
+        cronExpr = args.slice(1, 6).join(' ');
+        promptStart = 6;
+      }
+      const prompt = quoted ? quoted[2] : args.slice(promptStart).join(' ');
+
+      if (!cron.validate(cronExpr)) {
+        await ctx.reply(`Invalid cron expression: "${cronExpr}"\nFormat: minute hour day month weekday\nExample: "0 9 * * 1" = every Monday at 9:00`);
+        return;
+      }
+      if (!prompt.trim()) {
+        await ctx.reply('Prompt cannot be empty.');
+        return;
+      }
+
+      const schedule = insertSchedule(db, { projectId: project.id, cronExpr, prompt: prompt.trim() });
+      scheduleManager?.register(schedule!.id, project.id, cronExpr, prompt.trim());
+      await ctx.reply(`✅ Schedule [${schedule!.id}] created\nCron: ${cronExpr}\nPrompt: ${prompt.trim()}`);
+      return;
+    }
+
+    if (sub === 'remove') {
+      const id = parseInt(args[1]);
+      if (isNaN(id)) {
+        await ctx.reply('Usage: /schedule remove <id>');
+        return;
+      }
+      deleteSchedule(db, id, project.id);
+      scheduleManager?.unregister(id);
+      await ctx.reply(`✅ Schedule [${id}] removed.`);
+      return;
+    }
+
+    if (sub === 'on' || sub === 'off') {
+      const id = parseInt(args[1]);
+      if (isNaN(id)) {
+        await ctx.reply(`Usage: /schedule ${sub} <id>`);
+        return;
+      }
+      const enabled = sub === 'on';
+      setScheduleEnabled(db, id, project.id, enabled);
+      if (enabled) {
+        const all = getSchedulesByProject(db, project.id);
+        const s = all.find(x => x.id === id);
+        if (s) scheduleManager?.register(s.id, project.id, s.cronExpr, s.prompt);
+      } else {
+        scheduleManager?.unregister(id);
+      }
+      await ctx.reply(`✅ Schedule [${id}] ${enabled ? 'enabled ✅' : 'paused ⏸'}`);
+      return;
+    }
+
+    await ctx.reply(
+      'Schedule commands:\n' +
+      '/schedule list — list all schedules\n' +
+      '/schedule add <cron> <prompt> — create schedule\n' +
+      '  Example: /schedule add "0 9 * * 1" Run weekly lint\n' +
+      '  Cron format: minute hour day month weekday\n' +
+      '/schedule remove <id> — delete schedule\n' +
+      '/schedule on <id> — enable schedule\n' +
+      '/schedule off <id> — pause schedule'
+    );
   });
 
   // /test — run project tests and report result

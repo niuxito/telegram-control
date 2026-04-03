@@ -25,6 +25,13 @@ export function createAuthMiddleware(db: Db) {
       return;
     }
 
+    // Allow /requestaccess so unknown users can request access
+    const text = ctx.message?.text ?? '';
+    if (text.startsWith('/requestaccess')) {
+      await next();
+      return;
+    }
+
     // SECURITY: Silently ignore all other users
   };
 }

@@ -33,6 +33,10 @@ export function getRecentTasks(db: Db, projectId: number, limit = 5) {
     .all();
 }
 
+export function getTaskById(db: Db, id: number) {
+  return db.select().from(taskQueue).where(eq(taskQueue.id, id)).get();
+}
+
 export function cancelPendingTasks(db: Db, projectId: number) {
   return db.update(taskQueue)
     .set({ status: 'cancelled' })

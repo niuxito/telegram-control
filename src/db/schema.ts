@@ -36,6 +36,36 @@ export const taskQueue = sqliteTable('task_queue', {
   completedAt: integer('completed_at', { mode: 'timestamp' }),
 });
 
+export const localIssues = sqliteTable('local_issues', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  status: text('status', { enum: ['open', 'closed'] }).notNull().default('open'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  closedAt: integer('closed_at', { mode: 'timestamp' }),
+});
+
+export const schedules = sqliteTable('schedules', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  cronExpr: text('cron_expr').notNull(),
+  prompt: text('prompt').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  lastRunAt: integer('last_run_at', { mode: 'timestamp' }),
+});
+
+export const accessRequests = sqliteTable('access_requests', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull().unique(),
+  username: text('username'),
+  fullName: text('full_name'),
+  status: text('status', { enum: ['pending', 'approved', 'denied'] }).notNull().default('pending'),
+  requestedAt: integer('requested_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  resolvedAt: integer('resolved_at', { mode: 'timestamp' }),
+});
+
 export const guests = sqliteTable('guests', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   userId: integer('user_id').notNull().unique(),

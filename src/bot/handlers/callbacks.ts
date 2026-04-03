@@ -15,7 +15,11 @@ import {
   getPendingVercelDeploy,
   clearPendingVercelDeploy,
   buildVercelPrompt,
+  getPendingIssueRequest,
+  clearPendingIssueRequest,
 } from './projectTopic.js';
+import { buildPlanningIssuePrompt } from './agentIntent.js';
+import { insertLocalIssue } from '../../db/queries/localIssues.js';
 import { getPendingTasks } from '../../db/queries/taskQueue.js';
 import { config } from '../../config.js';
 
@@ -163,6 +167,44 @@ export function setupCallbackHandlers(bot: any, projectManager: ProjectManager, 
     clearPendingGithubPublic(userId);
     await ctx.answerCallbackQuery('Cancelled.');
     await ctx.editMessageText('❌ GitHub repo creation cancelled.');
+  });
+
+  // ── Issue without GitHub — setup repo first ──────────────────────────────
+  bot.callbackQuery(/^setup_github_for_issue:(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {
+    if (!isOwner(ctx)) { await ctx.answerCallbackQuery('Unauthorized.'); return; }
+    const userId = parseInt(ctx.match[1]);
+    const pending = getPendingIssueRequest(userId);
+    if (!pending) { await ctx.answerCallbackQuery('Request expired.'); return; }
+    clearPendingIssueRequest(userId);
+
+    const session = projectManager.getSession(pending.projectId);
+    if (!session) { await ctx.answerCallbackQuery('Session not found.'); return; }
+
+    await ctx.answerCallbackQuery('Setting up GitHub repo...');
+    // First create the repo, then create the issue
+    const setupPrompt =
+      buildGithubPrompt('', 'private') + '\n\n' +
+      'After the repo is created, continue with:\n' +
+      buildPlanningIssuePrompt(pending.description, true);
+    await session.queueTask(setupPrompt);
+    await ctx.editMessageText('✅ Queued: create GitHub repo + planning agent for the issue.');
+  });
+
+  // ── Issue without GitHub — store locally ─────────────────────────────────
+  bot.callbackQuery(/^local_issue:(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {
+    if (!isOwner(ctx)) { await ctx.answerCallbackQuery('Unauthorized.'); return; }
+    const userId = parseInt(ctx.match[1]);
+    const pending = getPendingIssueRequest(userId);
+    if (!pending) { await ctx.answerCallbackQuery('Request expired.'); return; }
+    clearPendingIssueRequest(userId);
+
+    const session = projectManager.getSession(pending.projectId);
+    if (!session) { await ctx.answerCallbackQuery('Session not found.'); return; }
+
+    await ctx.answerCallbackQuery('Analysing and storing locally...');
+    // Run planning agent, store the output as a local issue
+    await session.queueTask(buildPlanningIssuePrompt(pending.description, false));
+    await ctx.editMessageText('✅ Planning agent started — result will be stored as a local issue.');
   });
 
   // ── Vercel production deploy confirmation ─────────────────────────────────

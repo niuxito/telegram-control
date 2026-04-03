@@ -100,7 +100,8 @@ export class ClaudeSession {
           { parse_mode: 'Markdown' }
         );
         editSucceeded = true;
-      } catch {
+      } catch (err) {
+        console.warn(`[ClaudeSession] editMessage Markdown failed (task ${taskId}, isFinal=${isFinal}):`, err instanceof Error ? err.message : err);
         // Retry as plain text if Markdown parsing fails (e.g. unmatched symbols)
         try {
           await this.bot.api.editMessageText(
@@ -110,29 +111,33 @@ export class ClaudeSession {
             {}
           );
           editSucceeded = true;
-        } catch {
-          // Ignore edit errors (message not modified, etc.)
+        } catch (err2) {
+          console.warn(`[ClaudeSession] editMessage plain text failed (task ${taskId}, isFinal=${isFinal}):`, err2 instanceof Error ? err2.message : err2);
         }
       }
       // For final messages: if edit failed (e.g. rate-limited), send as a new message
       // so the result is always delivered to the user.
       if (isFinal && !editSucceeded) {
+        console.warn(`[ClaudeSession] Both edits failed for task ${taskId}, falling back to sendMessage`);
         try {
           await this.bot.api.sendMessage(this.chatId, display + suffix, {
             message_thread_id: this.topicId,
           });
-        } catch {
-          // Best-effort
+          console.log(`[ClaudeSession] sendMessage fallback succeeded for task ${taskId}`);
+        } catch (err3) {
+          console.error(`[ClaudeSession] sendMessage fallback also failed for task ${taskId}:`, err3 instanceof Error ? err3.message : err3);
         }
       }
     };
 
     let editTimer: ReturnType<typeof setTimeout> | null = null;
+    let taskDone = false;
 
     // Heartbeat: for long-running tasks, send a periodic update every 30s so the
     // user knows the task is still alive and to keep the Telegram session warm.
     const taskStartTime = Date.now();
     const heartbeatTimer = setInterval(async () => {
+      if (taskDone) return;
       const elapsedSec = Math.round((Date.now() - taskStartTime) / 1000);
       const preview = accumulatedText.length > 200
         ? '...' + accumulatedText.slice(-200)
@@ -185,6 +190,7 @@ export class ClaudeSession {
       });
 
       if (editTimer) clearTimeout(editTimer);
+      taskDone = true;
       clearInterval(heartbeatTimer);
 
       // Detect rate/usage limit errors before rendering the final message
@@ -211,6 +217,8 @@ export class ClaudeSession {
         });
         return;
       }
+
+      console.log(`[ClaudeSession] Task ${taskId} completed. success=${result.success} cost=$${result.costUsd} resultLen=${result.result?.length ?? 0} accumulatedLen=${accumulatedText.length}`);
 
       // Build final message
       const toolSummary = Object.entries(result.toolsUsed)
@@ -266,6 +274,7 @@ export class ClaudeSession {
       );
     } catch (err) {
       if (editTimer) clearTimeout(editTimer);
+      taskDone = true;
       clearInterval(heartbeatTimer);
       const errorMsg = err instanceof Error ? err.message : String(err);
       // SECURITY: log the full error server-side but do not expose internal details to Telegram

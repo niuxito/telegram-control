@@ -15,16 +15,49 @@ export function isIssueRequest(text: string): boolean {
   return ISSUE_PATTERNS.some(p => p.test(text));
 }
 
-export function buildIssueTaskPrompt(userRequest: string): string {
+/**
+ * Builds a prompt for a specialized planning + architecture agent.
+ * The agent analyzes the codebase and produces a detailed issue specification
+ * before creating it on GitHub (or printing it for local storage).
+ *
+ * @param userRequest  The raw user request describing the task
+ * @param createOnGithub  If true, agent creates the issue via `gh`. If false, it only prints the spec.
+ */
+export function buildPlanningIssuePrompt(userRequest: string, createOnGithub: boolean): string {
+  const creationStep = createOnGithub
+    ? `5. Create the GitHub issue:\n` +
+      `   gh issue create --title "<title>" --body "<full spec in markdown>"\n` +
+      `   Report the issue URL when done.`
+    : `5. Print the final specification in this exact format so it can be stored:\n` +
+      `   ISSUE_TITLE: <title>\n` +
+      `   ISSUE_BODY:\n` +
+      `   <full spec in markdown>`;
+
   return (
-    `Create a GitHub issue based on this request: "${userRequest}"\n\n` +
-    `Steps:\n` +
-    `1. Extract a concise title (max 80 chars) from the request\n` +
-    `2. Write a clear body/description\n` +
-    `3. Run: gh issue create --title "..." --body "..."\n` +
-    `4. Report the issue URL when done.\n\n` +
-    `If the repo has no remote or gh is not configured, report the error clearly.`
+    `You are a senior software architect and business analyst. Your job is to turn a rough request ` +
+    `into a precise, actionable issue specification.\n\n` +
+    `Request: "${userRequest}"\n\n` +
+    `Follow these steps:\n\n` +
+    `1. **Analyse the codebase**: Explore the relevant files to understand the current architecture, ` +
+    `data models, existing patterns, and any code that will be affected.\n\n` +
+    `2. **Business context**: Explain the motivation behind the request — what problem it solves ` +
+    `and the value it brings.\n\n` +
+    `3. **Functional requirements**: List exactly what the feature must do, written as user stories ` +
+    `or acceptance criteria (Given/When/Then or bullet points).\n\n` +
+    `4. **Technical specification**: Describe the proposed implementation:\n` +
+    `   - Files / modules to create or modify\n` +
+    `   - Data model changes (new tables, columns, schema migrations)\n` +
+    `   - API / interface changes\n` +
+    `   - Edge cases and error handling\n` +
+    `   - Security considerations\n` +
+    `   - Testing strategy\n\n` +
+    creationStep
   );
+}
+
+/** Legacy wrapper kept for wake-word / voice flows that auto-detect issue requests */
+export function buildIssueTaskPrompt(userRequest: string): string {
+  return buildPlanningIssuePrompt(userRequest, true);
 }
 
 /**
