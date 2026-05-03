@@ -1,6 +1,7 @@
 import type { Context } from 'grammy';
 import type { ProjectManager } from '../../projects/ProjectManager.js';
 import { addGuest, removeGuest, listGuests, upsertAccessRequest, getAccessRequest, getPendingRequests, resolveAccessRequest } from '../../db/queries/guests.js';
+import { getTasksSince } from '../../db/queries/taskQueue.js';
 import { config } from '../../config.js';
 import type { Db } from '../../db/client.js';
 
@@ -18,49 +19,85 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
 
   bot.command('help', async (ctx: Context) => {
     await ctx.reply(
-      'Global commands:\n' +
-      '/list — list projects\n' +
-      '/guest add|remove|list|requests|approve|deny — manage guests\n' +
-      '/requestaccess — request read-only access (for guests)\n\n' +
+      '📋 Global commands:\n' +
+      '/list — list all projects\n' +
+      '/broadcast <prompt> — run a task in all active projects\n' +
+      '/summary [hours] — activity summary (default: last 24h)\n' +
+      '/uptime — server CPU, RAM, disk and bot uptime\n' +
+      '/help — show this message\n' +
+      '/guest add|remove|list — manage guest users\n' +
+      '/guest requests — pending access requests\n' +
+      '/guest approve|deny <id> — approve/deny access request\n' +
+      '/requestaccess — request read-only guest access\n\n' +
 
-      'New Projects topic:\n' +
-      '/new <name> — create project\n' +
-      '/import [name] — import existing project\n\n' +
+      '🆕 New Projects topic:\n' +
+      '/new <name> — create a new project\n' +
+      '/import [name] — import existing local project\n' +
+      '/clone [url] — clone GitHub repo (no url = pick from list)\n\n' +
 
-      'Project topic — tasks:\n' +
-      '/task <prompt> — run Claude task\n' +
-      '/status — project status\n' +
-      '/queue — recent tasks\n' +
-      '/tasklist [n] — last N tasks with status\n' +
-      '/tasklog <id> — full output of a task\n' +
-      '/cancel — cancel current task\n' +
-      '/test — run npm test\n\n' +
+      '🤖 Project topic — tasks:\n' +
+      '/task <prompt> — run a Claude task\n' +
+      '/codex <prompt> — run a task with Codex (ChatGPT subscription)\n' +
+      '/status — current task status\n' +
+      '/queue — show task queue\n' +
+      '/tasklist [n] — last N tasks with status and cost\n' +
+      '/tasklog <id> — full output of a specific task\n' +
+      '/cancel — cancel the running task\n' +
+      '/test — run npm test\n' +
+      '/review — review current git diff\n' +
+      '/review <pr> — review a PR by number or URL\n\n' +
 
-      'Project topic — issues:\n' +
-      '/issue <description> — create issue (GitHub or local)\n' +
-      '/issue list [open|closed] — list issues\n' +
+      '🐛 Project topic — issues:\n' +
+      '/issue <description> — create issue via planning agent\n' +
+      '/issue list [open|closed] — list GitHub or local issues\n' +
       '/issue close <id> — close an issue\n\n' +
 
-      'Project topic — git:\n' +
-      '/git — recent commits\n' +
-      '/files [path] — list files\n' +
+      '📁 Project topic — files:\n' +
+      '/files [path] — list files in project directory\n' +
+      '/file <path> — send a file as Telegram attachment\n' +
+      'Send any file/photo — saves it to the project directory\n' +
+      'Send file + caption — saves and queues caption as task\n\n' +
+
+      '🔀 Project topic — git:\n' +
+      '/git — show recent commits\n' +
       '/github [private|public] — create GitHub repo\n' +
-      '/vercel link|deploy|preview|logs|env|domains\n\n' +
+      '/vercel link — link to Vercel project\n' +
+      '/vercel deploy — deploy to production\n' +
+      '/vercel preview — deploy preview\n' +
+      '/vercel logs — show deployment logs\n' +
+      '/vercel env — show environment variables\n' +
+      '/vercel domains — show domains\n\n' +
 
-      'Project topic — schedule:\n' +
-      '/schedule add "<cron>" <prompt> — create schedule\n' +
+      '🕐 Project topic — schedule:\n' +
+      '/schedule add "<cron>" <prompt> — create scheduled task\n' +
       '/schedule list — list schedules\n' +
-      '/schedule on|off|remove <id>\n\n' +
+      '/schedule on <id> — enable schedule\n' +
+      '/schedule off <id> — disable schedule\n' +
+      '/schedule remove <id> — delete schedule\n\n' +
 
-      'Project topic — config:\n' +
-      '/session — session info\n' +
-      '/newsession — reset session\n' +
-      '/watch on|off — file watching\n' +
-      '/gitwatch on|off — git watching\n' +
-      '/alias [word] — set wake word\n' +
-      '/pause / /unpause — pause project\n' +
-      '/archive — archive project\n' +
-      '/info — project info'
+      '⚙️ Project topic — config:\n' +
+      '/budget — show spend and limit\n' +
+      '/budget <amount> — set budget limit in USD\n' +
+      '/budget off — remove limit\n' +
+      '/note <text> — save a note for this project\n' +
+      '/note list — list recent notes\n' +
+      '/note delete <id> — delete a note\n' +
+      '/note clear — clear all notes\n' +
+      '/secret — send sensitive data privately via DM\n' +
+      '/context — show CLAUDE.md\n' +
+      '/context <text> — replace CLAUDE.md\n' +
+      '/context append <text> — append to CLAUDE.md\n' +
+      '/model — show/set Claude model for this project\n' +
+      '/session — session info and cost\n' +
+      '/newsession — start a fresh session\n' +
+      '/checkpoint — summarize session into CLAUDE.md and reset\n' +
+      '/watch on|off — toggle file change notifications\n' +
+      '/gitwatch on|off — toggle git commit notifications\n' +
+      '/alias [word] — set wake word for voice messages\n' +
+      '/pause — pause the project\n' +
+      '/unpause — resume a paused project\n' +
+      '/archive — archive the project\n' +
+      '/info — project details'
     );
   });
 
@@ -198,6 +235,127 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
     );
   });
 
+  // /uptime — server CPU, RAM, disk and process uptime
+  bot.command('uptime', async (ctx: Context) => {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const { freemem, totalmem, loadavg, uptime: osUptime } = await import('node:os');
+    const exec = promisify(execFile);
+
+    // Disk usage
+    let diskLine = 'N/A';
+    try {
+      const { stdout } = await exec('df', ['-h', '--output=size,used,avail,pcent', '/']);
+      const lines = stdout.trim().split('\n');
+      if (lines[1]) diskLine = lines[1].trim().replace(/\s+/g, '  ');
+    } catch { /* non-linux fallback */ }
+
+    const totalMB  = totalmem() / 1024 / 1024;
+    const freeMB   = freemem()  / 1024 / 1024;
+    const usedMB   = totalMB - freeMB;
+    const ramPct   = ((usedMB / totalMB) * 100).toFixed(1);
+    const [l1, l5, l15] = loadavg().map(n => n.toFixed(2));
+
+    const osSec    = Math.floor(osUptime());
+    const procSec  = Math.floor(process.uptime());
+    const fmt = (s: number) => {
+      const d = Math.floor(s / 86400);
+      const h = Math.floor((s % 86400) / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+    };
+
+    await ctx.reply(
+      `🖥 Server status\n\n` +
+      `CPU load:  ${l1} / ${l5} / ${l15} (1m / 5m / 15m)\n` +
+      `RAM:       ${usedMB.toFixed(0)} / ${totalMB.toFixed(0)} MB (${ramPct}%)\n` +
+      `Disk (/):  ${diskLine}\n\n` +
+      `OS uptime:  ${fmt(osSec)}\n` +
+      `Bot uptime: ${fmt(procSec)}`
+    );
+  });
+
+  // /summary [hours] — activity summary across all projects (default: last 24h)
+  bot.command('summary', async (ctx: Context) => {
+    const arg = (ctx.match as string).trim();
+    const hours = parseInt(arg) || 24;
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+    const allProjects = projectManager.getAllProjects();
+    const tasks = getTasksSince(db, since);
+
+    if (tasks.length === 0) {
+      await ctx.reply(`No activity in the last ${hours}h.`);
+      return;
+    }
+
+    // Group tasks by projectId
+    const byProject = new Map<number, typeof tasks>();
+    for (const task of tasks) {
+      if (!byProject.has(task.projectId)) byProject.set(task.projectId, []);
+      byProject.get(task.projectId)!.push(task);
+    }
+
+    const statusIcon = (s: string) =>
+      s === 'completed' ? '✅' : s === 'failed' ? '❌' : s === 'cancelled' ? '🚫' : '⏳';
+
+    const lines: string[] = [`📊 Activity summary — last ${hours}h\n`];
+    let totalCompleted = 0, totalFailed = 0, totalCost = 0;
+
+    for (const [projectId, ptasks] of byProject) {
+      const project = allProjects.find(p => p.id === projectId);
+      const name = project?.name ?? `project#${projectId}`;
+      const completed = ptasks.filter(t => t.status === 'completed').length;
+      const failed    = ptasks.filter(t => t.status === 'failed').length;
+      const cost      = ptasks.reduce((sum, t) => sum + (t.costUsd ?? 0), 0);
+
+      totalCompleted += completed;
+      totalFailed    += failed;
+      totalCost      += cost;
+
+      lines.push(`*${name}* — ${ptasks.length} task(s)`);
+      for (const t of ptasks.slice(-5)) {
+        const prompt = t.prompt.length > 60 ? t.prompt.slice(0, 60) + '…' : t.prompt;
+        lines.push(`  ${statusIcon(t.status)} ${prompt}`);
+      }
+      if (ptasks.length > 5) lines.push(`  … and ${ptasks.length - 5} more`);
+      if (cost > 0) lines.push(`  💰 $${cost.toFixed(4)}`);
+      lines.push('');
+    }
+
+    lines.push(`Totals: ✅ ${totalCompleted}  ❌ ${totalFailed}  💰 $${totalCost.toFixed(4)}`);
+
+    await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+  });
+
+  // /broadcast <prompt> — queue the same task in all active projects
+  bot.command('broadcast', async (ctx: Context) => {
+    const prompt = (ctx.match as string).trim();
+    if (!prompt) {
+      await ctx.reply('Usage: /broadcast <prompt>\n\nQueues the same task in all active projects.');
+      return;
+    }
+
+    const projects = projectManager.getAllProjects().filter(p => p.status === 'active');
+    if (projects.length === 0) {
+      await ctx.reply('No active projects to broadcast to.');
+      return;
+    }
+
+    const results: string[] = [];
+    for (const project of projects) {
+      const session = projectManager.getSession(project.id);
+      if (!session) {
+        results.push(`⚠️ ${project.name} — no session`);
+        continue;
+      }
+      await session.queueTask(prompt);
+      results.push(`✅ ${project.name}`);
+    }
+
+    await ctx.reply(`📡 Broadcast sent to ${projects.length} project(s):\n${results.join('\n')}`);
+  });
+
   bot.command('list', async (ctx: Context) => {
     const projects = projectManager.getAllProjects();
     if (projects.length === 0) {
@@ -210,4 +368,69 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
     // SECURITY: plain text — project name and path are user-supplied
     await ctx.reply(`Projects:\n${lines}`);
   });
+}
+
+// Registers every command with Telegram so they appear in the "/" menu.
+// Keep this list in sync with /help in setupGlobalCommands.
+export async function registerBotCommands(bot: any): Promise<void> {
+  const commands = [
+    // Global
+    { command: 'list',          description: 'List all projects' },
+    { command: 'broadcast',     description: 'Run a task in all active projects' },
+    { command: 'summary',       description: 'Activity summary (default last 24h)' },
+    { command: 'uptime',        description: 'Server CPU, RAM, disk and bot uptime' },
+    { command: 'help',          description: 'Show command help' },
+    { command: 'guest',         description: 'Manage guests: add|remove|list|requests|approve|deny' },
+    { command: 'requestaccess', description: 'Request read-only guest access' },
+
+    // New Projects topic
+    { command: 'new',    description: 'Create a new project' },
+    { command: 'import', description: 'Import existing local project' },
+    { command: 'clone',  description: 'Clone a GitHub repo (no url = pick from list)' },
+
+    // Project topic — tasks
+    { command: 'task',     description: 'Run a Claude task' },
+    { command: 'codex',    description: 'Run a task with Codex (ChatGPT subscription)' },
+    { command: 'status',   description: 'Current task status' },
+    { command: 'queue',    description: 'Show recent task queue' },
+    { command: 'tasklist', description: 'Last N tasks with status and cost' },
+    { command: 'tasklog',  description: 'Full output of a specific task' },
+    { command: 'cancel',   description: 'Cancel running and pending tasks' },
+    { command: 'test',     description: 'Run npm test' },
+    { command: 'review',   description: 'Review current diff or a PR by number/url' },
+
+    // Project topic — issues
+    { command: 'issue', description: 'Create or manage issues (list|close)' },
+
+    // Project topic — files
+    { command: 'files', description: 'List files in project directory' },
+    { command: 'file',  description: 'Send a file as Telegram attachment' },
+
+    // Project topic — git
+    { command: 'git',    description: 'Show recent commits' },
+    { command: 'github', description: 'Create GitHub repo (private|public)' },
+    { command: 'vercel', description: 'Vercel: link|deploy|preview|logs|env|domains' },
+
+    // Project topic — schedule
+    { command: 'schedule', description: 'Schedules: add|list|on|off|remove' },
+
+    // Project topic — config
+    { command: 'budget',     description: 'Show or set budget limit in USD' },
+    { command: 'note',       description: 'Project notes: add|list|delete|clear' },
+    { command: 'secret',     description: 'Send sensitive data privately via DM' },
+    { command: 'context',    description: 'Show, replace, or append CLAUDE.md' },
+    { command: 'model',      description: 'Show or set Claude model for this project' },
+    { command: 'session',    description: 'Session info and cost' },
+    { command: 'newsession', description: 'Start a fresh session' },
+    { command: 'checkpoint', description: 'Summarize session into CLAUDE.md and reset' },
+    { command: 'watch',      description: 'Toggle file change notifications (on|off)' },
+    { command: 'gitwatch',   description: 'Toggle git commit notifications (on|off)' },
+    { command: 'alias',      description: 'Set wake word for voice messages' },
+    { command: 'pause',      description: 'Pause the project' },
+    { command: 'unpause',    description: 'Resume a paused project' },
+    { command: 'archive',    description: 'Archive the project' },
+    { command: 'info',       description: 'Project details' },
+  ];
+
+  await bot.api.setMyCommands(commands);
 }
