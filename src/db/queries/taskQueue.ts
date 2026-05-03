@@ -1,4 +1,4 @@
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, gte } from 'drizzle-orm';
 import type { Db } from '../client.js';
 import { taskQueue } from '../schema.js';
 
@@ -35,6 +35,13 @@ export function getRecentTasks(db: Db, projectId: number, limit = 5) {
 
 export function getTaskById(db: Db, id: number) {
   return db.select().from(taskQueue).where(eq(taskQueue.id, id)).get();
+}
+
+export function getTasksSince(db: Db, since: Date) {
+  return db.select().from(taskQueue)
+    .where(gte(taskQueue.createdAt, since))
+    .orderBy(taskQueue.createdAt)
+    .all();
 }
 
 export function cancelPendingTasks(db: Db, projectId: number) {

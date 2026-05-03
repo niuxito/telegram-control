@@ -12,6 +12,9 @@ export const projects = sqliteTable('projects', {
   watchGit: integer('watch_git', { mode: 'boolean' }).notNull().default(true),
   gitCheckAt: integer('git_check_at', { mode: 'timestamp' }),
   wakeWord: text('wake_word'),
+  model: text('model'),
+  qaEnabled: integer('qa_enabled', { mode: 'boolean' }).notNull().default(true),
+  budgetUsd: real('budget_usd'),
 });
 
 export const claudeSessions = sqliteTable('claude_sessions', {
@@ -71,6 +74,22 @@ export const guests = sqliteTable('guests', {
   userId: integer('user_id').notNull().unique(),
   note: text('note'),
   addedAt: integer('added_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+});
+
+export const projectNotes = sqliteTable('project_notes', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  text: text('text').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+});
+
+export const topicMessages = sqliteTable('topic_messages', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  sender: text('sender', { enum: ['user', 'claude', 'codex'] }).notNull(),
+  senderName: text('sender_name'),
+  text: text('text').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
 export const notificationLog = sqliteTable('notification_log', {

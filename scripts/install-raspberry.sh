@@ -14,7 +14,7 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-STEPS_TOTAL=9
+STEPS_TOTAL=10
 STEP=0
 ERRORS=()
 
@@ -175,6 +175,23 @@ fi
 
 
 # ────────────────────────────────────────────
+next_step "Codex CLI (optional — ChatGPT subscription required)"
+# ────────────────────────────────────────────
+CODEX_LOCAL="node_modules/.bin/codex"
+if [ -f "$CODEX_LOCAL" ]; then
+  skip "Codex already installed locally ($CODEX_LOCAL)"
+elif command -v codex &>/dev/null; then
+  skip "Codex already installed globally ($(codex --version 2>/dev/null | head -1))"
+else
+  if npm install @openai/codex --silent; then
+    success "Codex installed locally (node_modules/.bin/codex)"
+  else
+    warn "Codex installation failed — skipping (optional, needed for /codex command)"
+  fi
+fi
+
+
+# ────────────────────────────────────────────
 next_step "npm dependencies + TypeScript build"
 # ────────────────────────────────────────────
 if npm install --silent; then
@@ -244,6 +261,17 @@ else
   echo -e "  ${GREEN}3.${RESET} vercel login ${GREEN}(already authenticated)${RESET}"
 fi
 
-echo -e "  ${YELLOW}4.${RESET} nano .env  ${CYAN}# fill in BOT_TOKEN, SUPERGROUP_ID, OWNER_USER_ID, etc.${RESET}"
-echo -e "  ${YELLOW}5.${RESET} npm start"
+CODEX_BIN="node_modules/.bin/codex"
+if [ -f "$CODEX_BIN" ]; then
+  if [ -d "$HOME/.codex" ] && [ "$(ls -A "$HOME/.codex" 2>/dev/null)" ]; then
+    echo -e "  ${GREEN}4.${RESET} npx codex login ${GREEN}(already authenticated)${RESET}"
+  else
+    echo -e "  ${YELLOW}4.${RESET} npx codex login  ${CYAN}# authenticate with your ChatGPT subscription${RESET}"
+  fi
+else
+  echo -e "  ${YELLOW}4.${RESET} npx codex login  ${CYAN}# (optional) authenticate Codex with ChatGPT subscription${RESET}"
+fi
+
+echo -e "  ${YELLOW}5.${RESET} nano .env  ${CYAN}# fill in BOT_TOKEN, SUPERGROUP_ID, OWNER_USER_ID, etc.${RESET}"
+echo -e "  ${YELLOW}6.${RESET} npm start"
 echo ""

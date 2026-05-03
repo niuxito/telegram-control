@@ -1,13 +1,21 @@
 import type { Context } from 'grammy';
 import { InlineKeyboard } from 'grammy';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { ProjectManager } from '../../projects/ProjectManager.js';
 import { confirmCancelKeyboard } from '../keyboards.js';
 import { config } from '../../config.js';
+
+const execFileAsync = promisify(execFile);
 
 // Pending new-project confirmations: userId -> { name }
 const pendingConfirmations = new Map<number, { name: string }>();
 // Pending import confirmations: userId -> { name }
 const pendingImports = new Map<number, { name: string }>();
+// Pending clone confirmations: userId -> { url }
+const pendingClones = new Map<number, { url: string }>();
+// Pending repo picker list: userId -> repos array (for index-based callback)
+const pendingRepoLists = new Map<number, Array<{ nameWithOwner: string; url: string; isPrivate: boolean }>>();
 
 export function setupNewProjectHandler(bot: any, projectManager: ProjectManager): void {
 
@@ -24,6 +32,26 @@ export function setupNewProjectHandler(bot: any, projectManager: ProjectManager)
     // Only first word is the name (no spaces in project names)
     const name = args.split(/\s+/)[0];
     await promptCreateConfirmation(ctx, name);
+  });
+
+  // /clone [url]  — clone a GitHub repo and register it as a project
+  //                  Only works in the New Projects topic.
+  bot.command('clone', async (ctx: Context) => {
+    const threadId = ctx.message?.message_thread_id;
+    console.log(`[clone] threadId=${threadId} NEW_PROJECTS_TOPIC_ID=${config.NEW_PROJECTS_TOPIC_ID}`);
+    if (threadId !== config.NEW_PROJECTS_TOPIC_ID) {
+      await ctx.reply('⚠️ /clone can only be used in the New Projects topic.');
+      return;
+    }
+
+    const url = (ctx.match as string).trim();
+
+    if (!url) {
+      await listGithubRepos(ctx);
+      return;
+    }
+
+    await promptCloneConfirmation(ctx, url);
   });
 
   // /import             — lists untracked directories in PROJECTS_BASE_DIR
@@ -111,6 +139,73 @@ async function promptImportConfirmation(
   );
 }
 
+async function listGithubRepos(ctx: Context): Promise<void> {
+  const statusMsg = await ctx.reply('🔍 Fetching your GitHub repositories...');
+
+  let stdout: string;
+  try {
+    const result = await execFileAsync('gh', [
+      'repo', 'list',
+      '--limit', '30',
+      '--json', 'nameWithOwner,url,isPrivate,description',
+    ]);
+    stdout = result.stdout;
+  } catch (err: any) {
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      statusMsg.message_id,
+      `❌ Failed to fetch GitHub repos.\n\nMake sure \`gh\` is authenticated:\n\`gh auth login\`\n\nError: ${err.message}`
+    );
+    return;
+  }
+
+  let repos: Array<{ nameWithOwner: string; url: string; isPrivate: boolean; description: string }>;
+  try {
+    repos = JSON.parse(stdout);
+  } catch {
+    await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, '❌ Could not parse repo list.');
+    return;
+  }
+
+  if (repos.length === 0) {
+    await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, 'No repositories found on your GitHub account.');
+    return;
+  }
+
+  // Store repo list so the callback can look up by index (avoids 64-byte callback_data limit)
+  const userId = ctx.from!.id;
+  pendingRepoLists.set(userId, repos);
+
+  // Build inline keyboard — one button per repo, one per row
+  const keyboard = new InlineKeyboard();
+  repos.forEach((repo, idx) => {
+    const icon = repo.isPrivate ? '🔒' : '🌐';
+    keyboard.text(`${icon} ${repo.nameWithOwner}`, `clone_pick:${userId}:${idx}`).row();
+  });
+
+  await ctx.api.editMessageText(
+    ctx.chat!.id,
+    statusMsg.message_id,
+    `📋 Your GitHub repositories (${repos.length}):\n\nSelect one to clone:`,
+    { reply_markup: keyboard }
+  );
+}
+
+async function promptCloneConfirmation(ctx: Context, url: string): Promise<void> {
+  const userId = ctx.from!.id;
+  pendingClones.set(userId, { url });
+
+  await ctx.reply(
+    `🔗 Clone repository?\n\nURL: ${url}\n\nThis will clone the repo into ${config.PROJECTS_BASE_DIR} and create a Telegram topic.`,
+    {
+      reply_markup: confirmCancelKeyboard(
+        `confirm_clone:${userId}`,
+        `cancel_clone:${userId}`
+      ),
+    }
+  );
+}
+
 export function getPendingConfirmation(userId: number) {
   return pendingConfirmations.get(userId);
 }
@@ -125,6 +220,26 @@ export function getPendingImport(userId: number) {
 
 export function clearPendingImport(userId: number) {
   pendingImports.delete(userId);
+}
+
+export function getPendingClone(userId: number) {
+  return pendingClones.get(userId);
+}
+
+export function setPendingClone(userId: number, url: string) {
+  pendingClones.set(userId, { url });
+}
+
+export function clearPendingClone(userId: number) {
+  pendingClones.delete(userId);
+}
+
+export function getRepoFromPendingList(userId: number, idx: number) {
+  return pendingRepoLists.get(userId)?.[idx];
+}
+
+export function clearPendingRepoList(userId: number) {
+  pendingRepoLists.delete(userId);
 }
 
 /** Called from router.ts for free-text messages in the New Projects topic. */

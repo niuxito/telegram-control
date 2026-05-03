@@ -5,6 +5,8 @@ export interface CliRunOptions {
   prompt: string;
   cwd: string;
   sessionId?: string;
+  model?: string;
+  signal?: AbortSignal;
   onTextChunk?: (text: string, accumulated: string) => void;
   onToolUse?: (toolName: string) => void;
   onInit?: (sessionId: string) => void;
@@ -31,7 +33,7 @@ export function classifyCliError(text: string): CliErrorType {
 }
 
 export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> {
-  const { prompt, cwd, sessionId, onTextChunk, onToolUse, onInit } = options;
+  const { prompt, cwd, sessionId, model, signal, onTextChunk, onToolUse, onInit } = options;
 
   const args = [
     '-p', prompt,
@@ -50,6 +52,10 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
     args.push('--resume', sessionId);
   }
 
+  if (model) {
+    args.push('--model', model);
+  }
+
   const TASK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
   return new Promise((resolve, reject) => {
@@ -61,6 +67,13 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
     });
     child.on('spawn', () => console.log(`[CliStrategy] Process spawned, pid=${child.pid}`));
     child.on('error', (err) => console.error(`[CliStrategy] Process error:`, err.message));
+
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        console.log(`[CliStrategy] Abort signal received, killing pid=${child.pid}`);
+        child.kill('SIGTERM');
+      }, { once: true });
+    }
 
     let buffer = '';
     let accumulatedText = '';
@@ -115,6 +128,20 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
     child.on('close', (code) => {
       console.log(`[CliStrategy] Process closed, code=${code}, hasResult=${!!resultEvent}, accumulated=${accumulatedText.length}chars`);
       clearTimeout(timeoutHandle);
+
+      if (signal?.aborted) {
+        resolve({
+          success: false,
+          sessionId: initSessionId,
+          costUsd: 0,
+          result: accumulatedText,
+          error: 'Task cancelled by user',
+          errorType: 'unknown',
+          toolsUsed,
+        });
+        return;
+      }
+
       // Process remaining buffer
       if (buffer.trim()) {
         const events = parseLineDetailed(buffer);

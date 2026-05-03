@@ -23,7 +23,10 @@ export function createTestDb() {
       watch_files INTEGER NOT NULL DEFAULT 1,
       watch_git INTEGER NOT NULL DEFAULT 1,
       git_check_at INTEGER,
-      wake_word TEXT
+      wake_word TEXT,
+      model TEXT,
+      qa_enabled INTEGER NOT NULL DEFAULT 1,
+      budget_usd REAL
     );
 
     CREATE TABLE IF NOT EXISTS claude_sessions (
@@ -48,13 +51,34 @@ export function createTestDb() {
       completed_at INTEGER
     );
 
-    CREATE TABLE IF NOT EXISTS notification_log (
+    CREATE TABLE IF NOT EXISTS local_issues (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       project_id INTEGER NOT NULL REFERENCES projects(id),
-      type TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      sent_at INTEGER NOT NULL,
-      telegram_message_id INTEGER
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at INTEGER NOT NULL,
+      closed_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS schedules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id),
+      cron_expr TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      last_run_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS access_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE,
+      username TEXT,
+      full_name TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      requested_at INTEGER NOT NULL,
+      resolved_at INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS guests (
@@ -62,6 +86,31 @@ export function createTestDb() {
       user_id INTEGER NOT NULL UNIQUE,
       note TEXT,
       added_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS project_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id),
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS topic_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id),
+      sender TEXT NOT NULL,
+      sender_name TEXT,
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id),
+      type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      sent_at INTEGER NOT NULL,
+      telegram_message_id INTEGER
     );
   `);
 

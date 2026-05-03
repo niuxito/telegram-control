@@ -154,6 +154,40 @@ function checkClaudeAuth(): CheckResult {
   };
 }
 
+function checkCodexCli(): CheckResult {
+  const label = 'Codex CLI (optional — parallel AI agent with ChatGPT subscription)';
+  const localBin = path.join(PROJECT_ROOT, 'node_modules/.bin/codex');
+  if (fs.existsSync(localBin)) {
+    const out = tryRun(`${localBin} --version`);
+    return { label, status: 'ok', message: out?.split('\n')[0] ?? 'installed (local)' };
+  }
+  const globalOut = tryRun('codex --version');
+  if (globalOut) {
+    return { label, status: 'ok', message: globalOut.split('\n')[0] };
+  }
+  return {
+    label,
+    status: 'warn',
+    message: 'not installed (optional)',
+    fix: 'Install:\n  npm install @openai/codex\nThen authenticate with your ChatGPT subscription:\n  npx codex login',
+  };
+}
+
+function checkCodexAuth(): CheckResult {
+  const label = 'Codex authenticated';
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const codexConfig = path.join(homeDir, '.codex');
+  if (fs.existsSync(codexConfig) && fs.readdirSync(codexConfig).length > 0) {
+    return { label, status: 'ok', message: 'credentials found in ~/.codex/' };
+  }
+  return {
+    label,
+    status: 'warn',
+    message: 'not authenticated (optional)',
+    fix: 'Run:\n  npx codex login',
+  };
+}
+
 function checkGhCli(): CheckResult {
   const label = 'gh CLI (optional — needed for /github command)';
   const out = tryRun('gh --version');
@@ -325,6 +359,12 @@ export async function runWizard(): Promise<boolean> {
   results.push(checkBetterSqlite());
   results.push(checkClaudeCli());
   results.push(checkClaudeAuth());
+
+  const codexResult = checkCodexCli();
+  results.push(codexResult);
+  if (codexResult.status === 'ok') {
+    results.push(checkCodexAuth());
+  }
 
   const ghResult = checkGhCli();
   results.push(ghResult);

@@ -1,10 +1,15 @@
 import type { Db } from '../db/client.js';
+import { insertTopicMessage } from '../db/queries/topicMessages.js';
 import { getLatestSession, insertSession, updateSession } from '../db/queries/sessions.js';
 import { insertTask, updateTask, getRunningTask, getPendingTasks } from '../db/queries/taskQueue.js';
+import { getProjectById } from '../db/queries/projects.js';
 import { runCliTask } from './CliStrategy.js';
+import { runCodexTask } from './CodexStrategy.js';
 import { formatLimitError } from '../notifications/formatters.js';
 import { agentEvents } from '../api/events.js';
+import { InlineKeyboard } from 'grammy';
 import type { Bot } from 'grammy';
+
 
 /** Remove backtick wrapping around URLs so Telegram renders them as clickable links. */
 function unwrapUrlsFromCode(text: string): string {
@@ -22,7 +27,10 @@ export class ClaudeSession {
   private projectName = '';
   private liveOutput = '';
 
-  constructor(db: Db, bot: Bot, projectId: number, projectPath: string, topicId: number, chatId: number, projectName = '') {
+  private model: string | undefined;
+  private currentTaskController: AbortController | null = null;
+
+  constructor(db: Db, bot: Bot, projectId: number, projectPath: string, topicId: number, chatId: number, projectName = '', model?: string) {
     this.db = db;
     this.bot = bot;
     this.projectId = projectId;
@@ -30,6 +38,15 @@ export class ClaudeSession {
     this.topicId = topicId;
     this.chatId = chatId;
     this.projectName = projectName;
+    this.model = model ?? undefined;
+  }
+
+  setModel(model: string | null) {
+    this.model = model ?? undefined;
+  }
+
+  getModel(): string | undefined {
+    return this.model;
   }
 
   getLiveOutput(): string {
@@ -157,11 +174,16 @@ export class ClaudeSession {
       }
     }, 30_000);
 
+    const controller = new AbortController();
+    this.currentTaskController = controller;
+
     try {
       const result = await runCliTask({
         prompt,
         cwd: this.projectPath,
         sessionId: session?.claudeSessionId ?? undefined,
+        model: this.model,
+        signal: controller.signal,
         onInit: (sessionId) => {
           // Update or create session record
           if (session) {
@@ -192,6 +214,7 @@ export class ClaudeSession {
       if (editTimer) clearTimeout(editTimer);
       taskDone = true;
       clearInterval(heartbeatTimer);
+      this.currentTaskController = null;
 
       // Detect rate/usage limit errors before rendering the final message
       const isLimitError = !result.success &&
@@ -201,20 +224,28 @@ export class ClaudeSession {
       if (isLimitError) {
         const notificationText = formatLimitError(result.errorType!);
         await editMessage(notificationText, true);
-        // Also send as a separate pinned-style message so it stands out in the topic
-        try {
-          await this.bot.api.sendMessage(this.chatId, notificationText, {
-            message_thread_id: this.topicId,
-          });
-        } catch {
-          // Non-fatal — the edit above already surfaced the error
-        }
+
         updateTask(this.db, taskId, {
           status: 'failed',
           result: result.error ?? notificationText,
           costUsd: result.costUsd,
           completedAt: new Date(),
         });
+
+        // Offer Codex fallback only for usage_limit (not rate_limit/overloaded which are transient)
+        if (result.errorType === 'usage_limit') {
+          const keyboard = new InlineKeyboard()
+            .text('🔄 Retry with Codex (OpenAI)', `codex_retry:${this.projectId}:${taskId}`);
+          try {
+            await this.bot.api.sendMessage(
+              this.chatId,
+              '💡 Want to retry this task using Codex (OpenAI)?',
+              { message_thread_id: this.topicId, reply_markup: keyboard }
+            );
+          } catch {
+            // Non-fatal
+          }
+        }
         return;
       }
 
@@ -261,6 +292,31 @@ export class ClaudeSession {
         });
       }
 
+      insertTopicMessage(this.db, { projectId: this.projectId, sender: 'claude', text: finalText });
+
+      // Budget alert: check if total spend has crossed the project limit
+      const project = getProjectById(this.db, this.projectId);
+      if (project?.budgetUsd != null) {
+        const updatedSession = getLatestSession(this.db, this.projectId);
+        const totalSpent = (updatedSession?.totalCostUsd ?? 0) + result.costUsd;
+        const limit = project.budgetUsd;
+        const pct = (totalSpent / limit) * 100;
+
+        if (totalSpent >= limit) {
+          await this.bot.api.sendMessage(
+            this.chatId,
+            `🚨 *Budget exceeded* for ${this.projectName}\n\nSpent: $${totalSpent.toFixed(4)} / $${limit.toFixed(2)} (${pct.toFixed(0)}%)\n\nUse /budget to review or /pause to stop tasks.`,
+            { message_thread_id: this.topicId, parse_mode: 'Markdown' }
+          );
+        } else if (pct >= 80) {
+          await this.bot.api.sendMessage(
+            this.chatId,
+            `⚠️ *Budget warning* for ${this.projectName}\n\nSpent: $${totalSpent.toFixed(4)} / $${limit.toFixed(2)} (${pct.toFixed(0)}%)`,
+            { message_thread_id: this.topicId, parse_mode: 'Markdown' }
+          );
+        }
+      }
+
       updateTask(this.db, taskId, {
         status: result.success ? 'completed' : 'failed',
         result: result.result,
@@ -276,6 +332,7 @@ export class ClaudeSession {
       if (editTimer) clearTimeout(editTimer);
       taskDone = true;
       clearInterval(heartbeatTimer);
+      this.currentTaskController = null;
       const errorMsg = err instanceof Error ? err.message : String(err);
       // SECURITY: log the full error server-side but do not expose internal details to Telegram
       console.error(`[ClaudeSession] Task ${taskId} failed:`, err);
@@ -290,6 +347,88 @@ export class ClaudeSession {
     }
   }
 
+  /** Runs a previously-failed task using Codex as fallback. */
+  async runWithCodex(taskId: number, prompt: string): Promise<void> {
+    if (this.processing) {
+      await this.bot.api.sendMessage(
+        this.chatId,
+        '⚠️ A task is already running. Please wait for it to finish before retrying with Codex.',
+        { message_thread_id: this.topicId }
+      );
+      return;
+    }
+
+    this.processing = true;
+    const workingMsg = await this.bot.api.sendMessage(
+      this.chatId,
+      '⏳ Running with Codex...',
+      { message_thread_id: this.topicId }
+    );
+
+    updateTask(this.db, taskId, { status: 'running', liveMessageId: workingMsg.message_id });
+    this.liveOutput = '';
+
+    const taskStartTime = Date.now();
+    const heartbeatTimer = setInterval(async () => {
+      const elapsedSec = Math.round((Date.now() - taskStartTime) / 1000);
+      try {
+        await this.bot.api.editMessageText(
+          this.chatId, workingMsg.message_id,
+          `⏳ Codex working... (${elapsedSec}s)`
+        );
+      } catch { /* ignore */ }
+    }, 30_000);
+
+    try {
+      const result = await runCodexTask({
+        prompt,
+        cwd: this.projectPath,
+        onTextChunk: (_chunk, accumulated) => { this.liveOutput = accumulated; },
+      });
+
+      clearInterval(heartbeatTimer);
+
+      const finalText = result.result || '(no output)';
+      const footer = '\n\n---\n🤖 Powered by Codex (OpenAI)';
+      const display = finalText.length > 4000 ? '...' + finalText.slice(-3997) : finalText;
+
+      try {
+        await this.bot.api.editMessageText(
+          this.chatId, workingMsg.message_id,
+          display + footer,
+          { parse_mode: 'Markdown' }
+        );
+      } catch {
+        await this.bot.api.editMessageText(
+          this.chatId, workingMsg.message_id,
+          display + footer
+        );
+      }
+
+      // Save Codex response to shared conversation history (full text, no truncation)
+      if (result.result?.trim()) {
+        insertTopicMessage(this.db, { projectId: this.projectId, sender: 'codex', text: result.result.trim() });
+      }
+
+      updateTask(this.db, taskId, {
+        status: result.success ? 'completed' : 'failed',
+        result: result.result,
+        completedAt: new Date(),
+      });
+    } catch (err) {
+      clearInterval(heartbeatTimer);
+      console.error('[ClaudeSession] Codex fallback failed:', err);
+      await this.bot.api.editMessageText(
+        this.chatId, workingMsg.message_id,
+        '❌ Codex task failed. Check server logs.'
+      );
+      updateTask(this.db, taskId, { status: 'failed', completedAt: new Date() });
+    } finally {
+      this.processing = false;
+      this.liveOutput = '';
+    }
+  }
+
   async getStatus() {
     const running = getRunningTask(this.db, this.projectId);
     const pending = getPendingTasks(this.db, this.projectId);
@@ -297,8 +436,61 @@ export class ClaudeSession {
     return { running, pendingCount: pending.length, session };
   }
 
+  /**
+   * Generates a session summary, appends it to CLAUDE.md, and resets the session.
+   * Runs synchronously (bypasses the task queue) so the result is captured immediately.
+   */
+  async checkpoint(): Promise<{ summary: string; appended: boolean }> {
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const { existsSync } = await import('node:fs');
+    const path = await import('node:path');
+
+    const session = getLatestSession(this.db, this.projectId);
+
+    const CHECKPOINT_PROMPT =
+      'Generate a concise session checkpoint for CLAUDE.md. Include:\n' +
+      '1. Key decisions made in this session\n' +
+      '2. Important context and findings\n' +
+      '3. Current state of the codebase (what was changed/added)\n' +
+      '4. Pending work or open issues\n\n' +
+      'Format it as a dated markdown section. Be specific and brief — this will be read by a fresh session.';
+
+    let summary = '';
+
+    const result = await runCliTask({
+      prompt: CHECKPOINT_PROMPT,
+      cwd: this.projectPath,
+      sessionId: session?.claudeSessionId ?? undefined,
+      model: this.model,
+    });
+    summary = result.result?.trim() ?? '';
+    console.log(`[ClaudeSession] Checkpoint result: success=${result.success}, length=${summary.length}`);
+
+    let appended = false;
+    if (summary) {
+      const claudeMdPath = path.join(this.projectPath, 'CLAUDE.md');
+      const existing = existsSync(claudeMdPath) ? await readFile(claudeMdPath, 'utf8') : '';
+      const separator = existing && !existing.endsWith('\n') ? '\n' : '';
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const block = `\n---\n## Checkpoint ${dateStr}\n\n${summary}\n`;
+      await writeFile(claudeMdPath, existing + separator + block, 'utf8');
+      appended = true;
+    }
+
+    // Reset session: next task will start a fresh Claude Code session
+    if (session) {
+      updateSession(this.db, session.id, { claudeSessionId: null });
+    }
+
+    return { summary, appended };
+  }
+
   async cancelCurrent() {
-    // Mark running tasks as cancelled
+    // Kill the real Claude process first, then update DB
+    if (this.currentTaskController) {
+      this.currentTaskController.abort();
+      this.currentTaskController = null;
+    }
     const running = getRunningTask(this.db, this.projectId);
     if (running) {
       updateTask(this.db, running.id, { status: 'cancelled', completedAt: new Date() });

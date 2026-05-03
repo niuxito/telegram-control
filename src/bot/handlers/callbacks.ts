@@ -6,6 +6,11 @@ import {
   clearPendingConfirmation,
   getPendingImport,
   clearPendingImport,
+  getPendingClone,
+  setPendingClone,
+  clearPendingClone,
+  getRepoFromPendingList,
+  clearPendingRepoList,
   handleImportPick,
 } from './newProject.js';
 import {
@@ -19,8 +24,9 @@ import {
   clearPendingIssueRequest,
 } from './projectTopic.js';
 import { buildPlanningIssuePrompt } from './agentIntent.js';
+import { confirmCancelKeyboard } from '../keyboards.js';
 import { insertLocalIssue } from '../../db/queries/localIssues.js';
-import { getPendingTasks } from '../../db/queries/taskQueue.js';
+import { getPendingTasks, getTaskById } from '../../db/queries/taskQueue.js';
 import { config } from '../../config.js';
 
 function isOwner(ctx: CallbackQueryContext<Context>): boolean {
@@ -128,6 +134,86 @@ export function setupCallbackHandlers(bot: any, projectManager: ProjectManager, 
     if (!isOwner(ctx)) { await ctx.answerCallbackQuery('Unauthorized.'); return; }
     await projectManager.archiveProject(parseInt(ctx.match[1]));
     await ctx.answerCallbackQuery('Project archived.');
+  });
+
+  // ── Clone repository ─────────────────────────────────────────────────────
+  // ── Clone: repo picker ────────────────────────────────────────────────────
+  bot.callbackQuery(/^clone_pick:(\d+):(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {
+    if (!isOwner(ctx)) { await ctx.answerCallbackQuery('Unauthorized.'); return; }
+
+    const userId = parseInt(ctx.match[1]);
+    const idx = parseInt(ctx.match[2]);
+
+    const repo = getRepoFromPendingList(userId, idx);
+    if (!repo) { await ctx.answerCallbackQuery('Selection expired. Run /clone again.'); return; }
+
+    clearPendingRepoList(userId);
+    setPendingClone(userId, repo.url);
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      `🔗 Clone repository?\n\nURL: ${repo.url}\n\nThis will clone the repo into ${config.PROJECTS_BASE_DIR} and create a Telegram topic.`,
+      {
+        reply_markup: confirmCancelKeyboard(
+          `confirm_clone:${userId}`,
+          `cancel_clone:${userId}`
+        ),
+      }
+    );
+  });
+
+  bot.callbackQuery(/^confirm_clone:(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {
+    if (!isOwner(ctx)) { await ctx.answerCallbackQuery('Unauthorized.'); return; }
+    const userId = parseInt(ctx.match[1]);
+    if (userId !== config.OWNER_USER_ID) { await ctx.answerCallbackQuery('Invalid token.'); return; }
+
+    const pending = getPendingClone(userId);
+    if (!pending) { await ctx.answerCallbackQuery('No pending clone found.'); return; }
+
+    clearPendingClone(userId);
+    await ctx.answerCallbackQuery('Cloning...');
+    await ctx.editMessageText(`🔄 Cloning ${pending.url}...`);
+
+    try {
+      const project = await projectManager.cloneProject(pending.url);
+      await ctx.editMessageText(
+        `✅ Repository cloned!\nPath: ${project.localPath}\nA new topic has been created.`
+      );
+    } catch (err) {
+      console.error('[Callbacks] Failed to clone repository:', err);
+      await ctx.editMessageText('❌ Failed to clone repository. Check the URL and server logs.');
+    }
+  });
+
+  bot.callbackQuery(/^cancel_clone:(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {
+    if (!isOwner(ctx)) { await ctx.answerCallbackQuery('Unauthorized.'); return; }
+    const userId = parseInt(ctx.match[1]);
+    clearPendingClone(userId);
+    await ctx.answerCallbackQuery('Cancelled.');
+    await ctx.editMessageText('❌ Clone cancelled.');
+  });
+
+  // ── Codex fallback retry ─────────────────────────────────────────────────
+  bot.callbackQuery(/^codex_retry:(\d+):(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {
+    if (!isOwner(ctx)) { await ctx.answerCallbackQuery('Unauthorized.'); return; }
+
+    const projectId = parseInt(ctx.match[1]);
+    const taskId    = parseInt(ctx.match[2]);
+
+    const session = projectManager.getSession(projectId);
+    if (!session) {
+      await ctx.answerCallbackQuery('Project session not found.');
+      return;
+    }
+
+    const task = getTaskById(db, taskId);
+    if (!task) {
+      await ctx.answerCallbackQuery('Task not found.');
+      return;
+    }
+
+    await ctx.answerCallbackQuery('Starting Codex...');
+    await ctx.editMessageText('🔄 Retrying with Codex (OpenAI)...');
+    session.runWithCodex(taskId, task.prompt);
   });
 
   // ── GitHub public repo confirmation ───────────────────────────────────────

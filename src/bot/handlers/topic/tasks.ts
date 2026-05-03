@@ -1,0 +1,368 @@
+import type { Context } from 'grammy';
+import type { ProjectManager } from '../../../projects/ProjectManager.js';
+import { getRecentTasks, getPendingTasks, cancelPendingTasks, getTaskById } from '../../../db/queries/taskQueue.js';
+import { insertTopicMessage, getRecentTopicMessages, buildConversationContext, resolveContextLimit } from '../../../db/queries/topicMessages.js';
+import { runCodexTask } from '../../../claude/CodexStrategy.js';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { spawn } from 'child_process';
+import type { Db } from '../../../db/client.js';
+
+const TEST_TIMEOUT_MS = 120_000;
+const MAX_OUTPUT_CHARS = 3800;
+
+function runProjectTests(cwd: string): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn('npm', ['test', '--', '--reporter=verbose'], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, CI: '1', FORCE_COLOR: '0' },
+    });
+
+    let output = '';
+    const append = (chunk: Buffer) => { output += chunk.toString(); };
+    child.stdout.on('data', append);
+    child.stderr.on('data', append);
+
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(formatTestOutput(output, null, true));
+    }, TEST_TIMEOUT_MS);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(formatTestOutput(output, code, false));
+    });
+  });
+}
+
+function formatTestOutput(raw: string, code: number | null, timedOut: boolean): string {
+  const header = timedOut
+    ? '⏱ Tests timed out after 120s\n\n'
+    : code === 0
+      ? '✅ Tests passed\n\n'
+      : `❌ Tests failed (exit ${code})\n\n`;
+
+  const trimmed = raw.length > MAX_OUTPUT_CHARS
+    ? `...(truncated)\n${raw.slice(-MAX_OUTPUT_CHARS)}`
+    : raw;
+
+  return header + trimmed;
+}
+
+export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: Db): void {
+
+  bot.command('task', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) {
+      await ctx.reply('This command must be used in a project topic.');
+      return;
+    }
+    const prompt = ctx.match as string;
+    if (!prompt) {
+      await ctx.reply('Usage: /task <prompt>');
+      return;
+    }
+    const session = projectManager.getSession(project.id);
+    if (!session) {
+      await ctx.reply('Project session not found. Project may be paused or archived.');
+      return;
+    }
+    const senderName = ctx.from?.username ?? ctx.from?.first_name ?? 'User';
+    insertTopicMessage(db, { projectId: project.id, sender: 'user', senderName, text: prompt });
+
+    await session.queueTask(prompt);
+    const pending = getPendingTasks(db, project.id);
+    if (pending.length > 1) {
+      await ctx.reply(`✅ Task queued (position ${pending.length}). Current task will finish first.`);
+    }
+  });
+
+  bot.command('status', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const session = projectManager.getSession(project.id);
+    if (!session) {
+      await ctx.reply(`📊 ${project.name}\nStatus: ${project.status}\nNo active session.`);
+      return;
+    }
+    const status = await session.getStatus();
+    await ctx.reply(
+      `📊 ${project.name}\n` +
+      `Status: ${project.status}\n` +
+      `Running task: ${status.running ? '✅ Yes' : '❌ No'}\n` +
+      `Pending tasks: ${status.pendingCount}\n` +
+      `Session ID: ${status.session?.claudeSessionId?.slice(0, 8) ?? 'none'}...\n` +
+      `Total cost: $${status.session?.totalCostUsd?.toFixed(4) ?? '0.0000'}\n` +
+      `File watch: ${project.watchFiles ? '✅' : '❌'}\n` +
+      `Git watch: ${project.watchGit ? '✅' : '❌'}`
+    );
+  });
+
+  bot.command('queue', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const tasks = getRecentTasks(db, project.id, 10);
+    if (tasks.length === 0) {
+      await ctx.reply('No tasks in history.');
+      return;
+    }
+    const lines = tasks.map(t =>
+      `• [${t.status}] ${t.prompt.slice(0, 50)}${t.prompt.length > 50 ? '...' : ''}`
+    ).join('\n');
+    await ctx.reply(`Recent Tasks:\n${lines}`);
+  });
+
+  bot.command('cancel', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    cancelPendingTasks(db, project.id);
+    const session = projectManager.getSession(project.id);
+    session?.cancelCurrent();
+    await ctx.reply('✅ Cancelled pending tasks.');
+  });
+
+  bot.command('tasklist', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const n = Math.min(parseInt((ctx.match as string) || '10') || 10, 50);
+    const tasks = getRecentTasks(db, project.id, n);
+    if (tasks.length === 0) {
+      await ctx.reply('No tasks found.');
+      return;
+    }
+    const statusIcon: Record<string, string> = {
+      completed: '✅', failed: '❌', cancelled: '🚫', running: '⏳', pending: '🕐',
+    };
+    const lines = tasks.map(t => {
+      const icon = statusIcon[t.status] ?? '•';
+      const date = t.createdAt ? new Date(t.createdAt).toISOString().slice(11, 16) : '';
+      const prompt = t.prompt.slice(0, 60) + (t.prompt.length > 60 ? '…' : '');
+      const cost = t.costUsd ? ` $${t.costUsd.toFixed(4)}` : '';
+      return `${icon} [${t.id}] ${date} ${prompt}${cost}`;
+    }).join('\n');
+    await ctx.reply(`Tasks (last ${tasks.length}):\n${lines}`);
+  });
+
+  bot.command('tasklog', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const id = parseInt((ctx.match as string) || '');
+    if (isNaN(id)) {
+      await ctx.reply('Usage: /tasklog <id>');
+      return;
+    }
+    const task = getTaskById(db, id);
+    if (!task || task.projectId !== project.id) {
+      await ctx.reply(`Task ${id} not found.`);
+      return;
+    }
+    const statusIcon: Record<string, string> = {
+      completed: '✅', failed: '❌', cancelled: '🚫', running: '⏳', pending: '🕐',
+    };
+    const icon = statusIcon[task.status] ?? '•';
+    const date = task.createdAt ? new Date(task.createdAt).toLocaleString() : '';
+    const cost = task.costUsd ? `$${task.costUsd.toFixed(4)}` : 'n/a';
+    const header = `${icon} Task ${task.id} — ${task.status}\n${date} | cost: ${cost}\n\nPrompt: ${task.prompt}\n\n`;
+    const output = task.result ?? '(no output)';
+    const full = header + output;
+    if (full.length > 4096) {
+      await ctx.reply(header + output.slice(0, 4096 - header.length - 3) + '…');
+    } else {
+      await ctx.reply(full);
+    }
+  });
+
+  bot.command('test', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    try {
+      const pkg = JSON.parse(readFileSync(path.join(project.localPath, 'package.json'), 'utf-8'));
+      if (!pkg.scripts?.test) {
+        await ctx.reply('No test script found in package.json.');
+        return;
+      }
+    } catch {
+      // No package.json — try anyway
+    }
+
+    const msg = await ctx.reply('🧪 Running tests...');
+    const chatId = ctx.chat!.id;
+    const msgId = msg.message_id;
+    const output = await runProjectTests(project.localPath);
+    await ctx.api.editMessageText(chatId, msgId, output);
+  });
+
+  bot.command('codex', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) {
+      await ctx.reply('This command must be used in a project topic.');
+      return;
+    }
+    const prompt = (ctx.match as string).trim();
+    if (!prompt) {
+      await ctx.reply('Usage: /codex <prompt>\n\nRuns the task using Codex (ChatGPT subscription) as a parallel AI agent.');
+      return;
+    }
+
+    // Resolve context limit: --more flag or keyword detection
+    const { limit, flagFound, promptClean } = resolveContextLimit(prompt);
+    const finalUserPrompt = promptClean;
+
+    const msg = await ctx.reply('🤖 Codex is working on it...');
+    const chatId = ctx.chat!.id;
+    const msgId = msg.message_id;
+
+    // Save user message to shared history (without the --more flag)
+    const senderName = ctx.from?.username ?? ctx.from?.first_name ?? 'User';
+    insertTopicMessage(db, { projectId: project.id, sender: 'user', senderName, text: finalUserPrompt });
+
+    // Build prompt with conversation context
+    const history = getRecentTopicMessages(db, project.id, limit);
+    const context = buildConversationContext(history.slice(0, -1));
+    const contextualPrompt = context ? `${context}Current request: ${finalUserPrompt}` : finalUserPrompt;
+
+    if (flagFound) {
+      await ctx.api.editMessageText(chatId, msgId, `🤖 Codex is working on it (with extended context: ${history.length} messages)...`);
+    }
+
+    let dots = 0;
+    const heartbeat = setInterval(async () => {
+      dots = (dots + 1) % 4;
+      try {
+        await ctx.api.editMessageText(chatId, msgId, `🤖 Codex is working on it${'.'.repeat(dots + 1)}`);
+      } catch { /* ignore edit races */ }
+    }, 5000);
+
+    try {
+      const result = await runCodexTask({ prompt: contextualPrompt, cwd: project.localPath });
+      clearInterval(heartbeat);
+
+      const body = result.result?.trim() || result.error || '(no output)';
+      const header = result.success ? '' : '⚠️ Codex finished with errors\n\n';
+      const footer = '\n\n— 🤖 Powered by Codex (OpenAI)';
+      const full = header + body + footer;
+
+      // Save Codex response to shared history
+      if (result.result?.trim()) {
+        insertTopicMessage(db, { projectId: project.id, sender: 'codex', text: result.result.trim() });
+      }
+
+      if (full.length > 4096) {
+        await ctx.api.editMessageText(chatId, msgId, full.slice(0, 4093) + '…');
+      } else {
+        await ctx.api.editMessageText(chatId, msgId, full);
+      }
+    } catch (err: any) {
+      clearInterval(heartbeat);
+      await ctx.api.editMessageText(chatId, msgId, `❌ Codex error: ${err.message}`);
+    }
+  });
+
+  // /review         — review current git diff
+  // /review <pr>    — review a specific PR number (requires gh CLI)
+  // /review <url>   — review a PR by URL
+  bot.command('review', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const session = projectManager.getSession(project.id);
+    if (!session) {
+      await ctx.reply('Project session not found. Project may be paused or archived.');
+      return;
+    }
+
+    const arg = (ctx.match as string).trim();
+    const msg = await ctx.reply('🔍 Preparing review...');
+    const chatId = ctx.chat!.id;
+    const msgId = msg.message_id;
+
+    try {
+      let diffText = '';
+      let reviewTarget = '';
+
+      if (!arg) {
+        // Review current working diff
+        const { execFile } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const exec = promisify(execFile);
+
+        const { stdout: staged } = await exec('git', ['diff', '--cached'], { cwd: project.localPath }).catch(() => ({ stdout: '' }));
+        const { stdout: unstaged } = await exec('git', ['diff'], { cwd: project.localPath }).catch(() => ({ stdout: '' }));
+        diffText = (staged + unstaged).trim();
+
+        if (!diffText) {
+          // Fall back to diff against main/master
+          const { stdout: branch } = await exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: project.localPath }).catch(() => ({ stdout: 'HEAD' }));
+          const base = branch.trim() === 'main' ? 'HEAD~1' : 'main';
+          const { stdout } = await exec('git', ['diff', base], { cwd: project.localPath }).catch(() => ({ stdout: '' }));
+          diffText = stdout.trim();
+          reviewTarget = `diff vs ${base}`;
+        } else {
+          reviewTarget = 'current changes (staged + unstaged)';
+        }
+
+        if (!diffText) {
+          await ctx.api.editMessageText(chatId, msgId, 'No changes to review. Working tree is clean.');
+          return;
+        }
+
+        const MAX_DIFF_CHARS = 12000;
+        if (diffText.length > MAX_DIFF_CHARS) {
+          diffText = diffText.slice(0, MAX_DIFF_CHARS) + '\n... (diff truncated)';
+        }
+
+      } else {
+        // PR review via gh CLI
+        const prRef = arg.match(/\/pull\/(\d+)/) ? arg.match(/\/pull\/(\d+)/)![1] : arg;
+        const prNum = parseInt(prRef);
+        if (isNaN(prNum)) {
+          await ctx.api.editMessageText(chatId, msgId, '❌ Invalid PR reference. Usage: /review <number> or /review <url>');
+          return;
+        }
+
+        const { execFile } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const exec = promisify(execFile);
+
+        let prInfo = '';
+        try {
+          const { stdout } = await exec('gh', ['pr', 'view', String(prNum), '--json', 'title,body,additions,deletions,files'], { cwd: project.localPath });
+          const pr = JSON.parse(stdout);
+          prInfo = `PR #${prNum}: ${pr.title}\n\n${pr.body ?? ''}\n\n+${pr.additions} -${pr.deletions} in ${pr.files?.length ?? '?'} file(s)`;
+        } catch {
+          prInfo = `PR #${prNum}`;
+        }
+
+        const { stdout: diff } = await exec('gh', ['pr', 'diff', String(prNum)], { cwd: project.localPath });
+        diffText = diff.trim();
+        reviewTarget = prInfo;
+
+        const MAX_DIFF_CHARS = 12000;
+        if (diffText.length > MAX_DIFF_CHARS) {
+          diffText = diffText.slice(0, MAX_DIFF_CHARS) + '\n... (diff truncated)';
+        }
+      }
+
+      await ctx.api.editMessageText(chatId, msgId, `🔍 Reviewing ${reviewTarget}...`);
+
+      const reviewPrompt =
+        `Please review the following code diff for ${project.name}.\n\n` +
+        `Focus on: correctness, security issues, potential bugs, code quality, and anything that looks risky or should be reconsidered.\n` +
+        `Be concise — highlight only the most important findings. If the code looks good, say so briefly.\n\n` +
+        `${reviewTarget ? `Context: ${reviewTarget}\n\n` : ''}` +
+        `\`\`\`diff\n${diffText}\n\`\`\``;
+
+      await session.queueTask(reviewPrompt);
+
+    } catch (err: any) {
+      await ctx.api.editMessageText(chatId, msgId, `❌ Review error: ${err.message}`);
+    }
+  });
+}

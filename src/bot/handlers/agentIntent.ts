@@ -11,6 +11,32 @@ const ISSUE_PATTERNS = [
   /\bopen\s+(a[n]?\s+)?issue/i,
 ];
 
+// Patterns that indicate a development/implementation request → use /feature skill
+const FEATURE_PATTERNS = [
+  /\bimplementa[r]?\b/i,
+  /\bdesarrolla[r]?\b/i,
+  /\bañade?\s+/i,
+  /\bagrega[r]?\s+/i,
+  /\bconstruye?\b/i,
+  /\brefactori[zs]a[r]?\b/i,
+  /\bcrea[r]?\s+(un[ao]?\s+)?(nuevo\s+)?(comando|endpoint|función|feature|componente|módulo|clase|servicio|handler|ruta|página|vista|api|bot)/i,
+  /\bimplement\b/i,
+  /\brefactor\b/i,
+  /\badd\s+(a\s+)?(new\s+)?(command|endpoint|function|feature|component|module|class|service|handler|route|page|api)/i,
+  /\bbuild\s+(a\s+)?(new\s+)?/i,
+  /\bdevelop\b/i,
+];
+
+// Patterns that are clearly NOT feature requests (informational, operational)
+const NON_FEATURE_PATTERNS = [
+  /\b(muestra|lista|explica|dame|dime|qué|cómo|cuál|cuánto|show|list|explain|what|how|which|status|git\s|deploy|test\s|check\s|ver\s|ejecuta|run\s|instala|install)\b/i,
+];
+
+export function isFeatureRequest(text: string): boolean {
+  if (NON_FEATURE_PATTERNS.some(p => p.test(text))) return false;
+  return FEATURE_PATTERNS.some(p => p.test(text));
+}
+
 export function isIssueRequest(text: string): boolean {
   return ISSUE_PATTERNS.some(p => p.test(text));
 }

@@ -1,6 +1,7 @@
 import type { Db } from '../db/client.js';
 import type { Bot } from 'grammy';
 import { readdirSync } from 'fs';
+import { spawn } from 'child_process';
 import path from 'path';
 import {
   getActiveProjects,
@@ -16,6 +17,7 @@ import { FileWatcher } from '../watchers/FileWatcher.js';
 import { GitWatcher } from '../watchers/GitWatcher.js';
 import { NotificationService } from '../notifications/NotificationService.js';
 import { scaffoldProject, expandPath } from './scaffold.js';
+import simpleGit from 'simple-git';
 import { config } from '../config.js';
 
 export class ProjectManager {
@@ -52,7 +54,8 @@ export class ProjectManager {
       expandPath(project.localPath),
       project.topicId,
       config.SUPERGROUP_ID,
-      project.name
+      project.name,
+      project.model ?? undefined
     );
     this.sessions.set(project.id, session);
 
@@ -81,6 +84,31 @@ export class ProjectManager {
     const localPath = path.join(expandPath(config.PROJECTS_BASE_DIR), name);
     scaffoldProject(name, localPath);
     return this._registerProject(name, localPath, '🚀 Project created!');
+  }
+
+  /** Clones a GitHub repo into PROJECTS_BASE_DIR/<name> and registers it.
+   *  Uses `gh repo clone` so existing gh auth credentials are used automatically. */
+  async cloneProject(url: string): Promise<Project> {
+    const match = url.match(/([^/]+?)(?:\.git)?$/);
+    if (!match) throw new Error(`Cannot extract repo name from URL: ${url}`);
+    const name = match[1];
+    const baseDir = expandPath(config.PROJECTS_BASE_DIR);
+    const localPath = path.join(baseDir, name);
+    console.log(`[ProjectManager] Cloning ${url} into ${localPath} via gh`);
+
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('gh', ['repo', 'clone', url, localPath], {
+        stdio: 'pipe',
+        cwd: baseDir,
+      });
+      child.on('close', (code: number) => {
+        if (code === 0) resolve();
+        else reject(new Error(`gh repo clone exited with code ${code}`));
+      });
+      child.on('error', reject);
+    });
+
+    return this._registerProject(name, localPath, '🔗 Project cloned!');
   }
 
   /** Imports an existing directory from PROJECTS_BASE_DIR/<name> without overwriting anything. */
