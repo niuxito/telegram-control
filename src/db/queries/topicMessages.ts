@@ -20,13 +20,14 @@ export function needsMoreContext(prompt: string): boolean {
 
 export function insertTopicMessage(
   db: Db,
-  data: { projectId: number; sender: 'user' | 'claude' | 'codex'; senderName?: string; text: string }
+  data: { projectId: number; sender: 'user' | 'claude' | 'codex'; senderName?: string; text: string; createdAt?: Date }
 ): void {
   db.insert(topicMessages).values({
     projectId: data.projectId,
     sender: data.sender,
     senderName: data.senderName ?? null,
     text: data.text,
+    ...(data.createdAt ? { createdAt: data.createdAt } : {}),
   }).run();
 
   // Prune oldest messages, keeping only MAX_STORED_MESSAGES per project

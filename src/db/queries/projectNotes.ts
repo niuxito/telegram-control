@@ -2,8 +2,12 @@ import { desc, eq } from 'drizzle-orm';
 import type { Db } from '../client.js';
 import { projectNotes } from '../schema.js';
 
-export function insertNote(db: Db, projectId: number, text: string): void {
-  db.insert(projectNotes).values({ projectId, text }).run();
+export function insertNote(db: Db, projectId: number, text: string, createdAt?: Date): void {
+  db.insert(projectNotes).values({
+    projectId,
+    text,
+    ...(createdAt ? { createdAt } : {}),
+  }).run();
 }
 
 export function getRecentNotes(db: Db, projectId: number, limit = 10) {
