@@ -3,6 +3,7 @@ import type { ProjectManager } from '../../../projects/ProjectManager.js';
 import { getRecentTasks, getPendingTasks, cancelPendingTasks, getTaskById } from '../../../db/queries/taskQueue.js';
 import { insertTopicMessage, getRecentTopicMessages, buildConversationContext, resolveContextLimit } from '../../../db/queries/topicMessages.js';
 import { runCodexTask } from '../../../claude/CodexStrategy.js';
+import { parsePrReference, truncateDiff, buildReviewPrompt, MAX_REVIEW_DIFF_CHARS } from './reviewHelpers.js';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -313,16 +314,12 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
           return;
         }
 
-        const MAX_DIFF_CHARS = 12000;
-        if (diffText.length > MAX_DIFF_CHARS) {
-          diffText = diffText.slice(0, MAX_DIFF_CHARS) + '\n... (diff truncated)';
-        }
+        diffText = truncateDiff(diffText, MAX_REVIEW_DIFF_CHARS);
 
       } else {
         // PR review via gh CLI
-        const prRef = arg.match(/\/pull\/(\d+)/) ? arg.match(/\/pull\/(\d+)/)![1] : arg;
-        const prNum = parseInt(prRef);
-        if (isNaN(prNum)) {
+        const prNum = parsePrReference(arg);
+        if (prNum === null) {
           await ctx.api.editMessageText(chatId, msgId, '❌ Invalid PR reference. Usage: /review <number> or /review <url>');
           return;
         }
@@ -341,25 +338,13 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
         }
 
         const { stdout: diff } = await exec('gh', ['pr', 'diff', String(prNum)], { cwd: project.localPath });
-        diffText = diff.trim();
+        diffText = truncateDiff(diff.trim(), MAX_REVIEW_DIFF_CHARS);
         reviewTarget = prInfo;
-
-        const MAX_DIFF_CHARS = 12000;
-        if (diffText.length > MAX_DIFF_CHARS) {
-          diffText = diffText.slice(0, MAX_DIFF_CHARS) + '\n... (diff truncated)';
-        }
       }
 
       await ctx.api.editMessageText(chatId, msgId, `🔍 Reviewing ${reviewTarget}...`);
 
-      const reviewPrompt =
-        `Please review the following code diff for ${project.name}.\n\n` +
-        `Focus on: correctness, security issues, potential bugs, code quality, and anything that looks risky or should be reconsidered.\n` +
-        `Be concise — highlight only the most important findings. If the code looks good, say so briefly.\n\n` +
-        `${reviewTarget ? `Context: ${reviewTarget}\n\n` : ''}` +
-        `\`\`\`diff\n${diffText}\n\`\`\``;
-
-      await session.queueTask(reviewPrompt);
+      await session.queueTask(buildReviewPrompt(project.name, reviewTarget, diffText));
 
     } catch (err: any) {
       await ctx.api.editMessageText(chatId, msgId, `❌ Review error: ${err.message}`);

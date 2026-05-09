@@ -5,6 +5,7 @@ import { insertTask, updateTask, getRunningTask, getRunningTasksByProject, getPe
 import { getProjectById } from '../db/queries/projects.js';
 import { runCliTask } from './CliStrategy.js';
 import { runCodexTask } from './CodexStrategy.js';
+import { CHECKPOINT_PROMPT, formatCheckpointBlock, composeCheckpointAppend } from './checkpointFormat.js';
 import { formatLimitError } from '../notifications/formatters.js';
 import { agentEvents } from '../api/events.js';
 import { InlineKeyboard } from 'grammy';
@@ -447,33 +448,21 @@ export class ClaudeSession {
 
     const session = getLatestSession(this.db, this.projectId);
 
-    const CHECKPOINT_PROMPT =
-      'Generate a concise session checkpoint for CLAUDE.md. Include:\n' +
-      '1. Key decisions made in this session\n' +
-      '2. Important context and findings\n' +
-      '3. Current state of the codebase (what was changed/added)\n' +
-      '4. Pending work or open issues\n\n' +
-      'Format it as a dated markdown section. Be specific and brief — this will be read by a fresh session.';
-
-    let summary = '';
-
     const result = await runCliTask({
       prompt: CHECKPOINT_PROMPT,
       cwd: this.projectPath,
       sessionId: session?.claudeSessionId ?? undefined,
       model: this.model,
     });
-    summary = result.result?.trim() ?? '';
+    const summary = result.result?.trim() ?? '';
     console.log(`[ClaudeSession] Checkpoint result: success=${result.success}, length=${summary.length}`);
 
     let appended = false;
     if (summary) {
       const claudeMdPath = path.join(this.projectPath, 'CLAUDE.md');
       const existing = existsSync(claudeMdPath) ? await readFile(claudeMdPath, 'utf8') : '';
-      const separator = existing && !existing.endsWith('\n') ? '\n' : '';
-      const dateStr = new Date().toISOString().slice(0, 10);
-      const block = `\n---\n## Checkpoint ${dateStr}\n\n${summary}\n`;
-      await writeFile(claudeMdPath, existing + separator + block, 'utf8');
+      const block = formatCheckpointBlock(summary);
+      await writeFile(claudeMdPath, composeCheckpointAppend(existing, block), 'utf8');
       appended = true;
     }
 
