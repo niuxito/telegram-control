@@ -59,6 +59,17 @@ export class ProjectManager {
     );
     this.sessions.set(project.id, session);
 
+    // Rehydrate the queue: clean up tasks left running by a previous process
+    // and resume any pending tasks that were waiting before the restart.
+    try {
+      const { orphaned, resumed } = await session.rehydrate();
+      if (orphaned || resumed) {
+        console.log(`[ProjectManager] ${project.name}: rehydrated ${orphaned} orphaned, resumed ${resumed} pending`);
+      }
+    } catch (err) {
+      console.warn(`[ProjectManager] ${project.name}: rehydrate failed —`, err instanceof Error ? err.message : err);
+    }
+
     if (project.watchFiles) {
       const fw = new FileWatcher(
         expandPath(project.localPath),

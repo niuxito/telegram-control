@@ -17,6 +17,15 @@ export function getRunningTask(db: Db, projectId: number) {
     .get();
 }
 
+// Plural variant used at startup to detect orphaned tasks left in 'running'
+// after a crash/restart. Should usually return 0 or 1; more is defensive.
+export function getRunningTasksByProject(db: Db, projectId: number) {
+  return db.select().from(taskQueue)
+    .where(and(eq(taskQueue.projectId, projectId), eq(taskQueue.status, 'running')))
+    .orderBy(taskQueue.createdAt)
+    .all();
+}
+
 export function insertTask(db: Db, data: typeof taskQueue.$inferInsert) {
   return db.insert(taskQueue).values(data).returning().get();
 }

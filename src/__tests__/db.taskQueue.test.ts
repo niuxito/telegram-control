@@ -5,6 +5,7 @@ import {
   insertTask,
   getPendingTasks,
   getRunningTask,
+  getRunningTasksByProject,
   updateTask,
   getRecentTasks,
   cancelPendingTasks,
@@ -205,6 +206,58 @@ describe('DB — taskQueue queries', () => {
       const statuses = recent.map(t => t.status);
       expect(statuses).toContain('pending');
       expect(statuses).toContain('completed');
+    });
+  });
+
+  describe('getRunningTasksByProject', () => {
+    it('returns empty array when no tasks are running', () => {
+      seedTask(db, projectId, 'just pending');
+      expect(getRunningTasksByProject(db, projectId)).toEqual([]);
+    });
+
+    it('returns the running task when one exists', () => {
+      const t = seedTask(db, projectId, 'in flight');
+      updateTask(db, t!.id, { status: 'running' });
+      const running = getRunningTasksByProject(db, projectId);
+      expect(running.length).toBe(1);
+      expect(running[0].prompt).toBe('in flight');
+    });
+
+    it('returns multiple running tasks ordered by createdAt', () => {
+      const t1 = seedTask(db, projectId, 'first',  new Date('2026-01-01'));
+      const t2 = seedTask(db, projectId, 'second', new Date('2026-01-02'));
+      updateTask(db, t1!.id, { status: 'running' });
+      updateTask(db, t2!.id, { status: 'running' });
+      const running = getRunningTasksByProject(db, projectId);
+      expect(running.map(t => t.prompt)).toEqual(['first', 'second']);
+    });
+
+    it('does not return pending, completed, failed, or cancelled tasks', () => {
+      const tPending  = seedTask(db, projectId, 'pending');
+      const tComplete = seedTask(db, projectId, 'done');
+      const tFailed   = seedTask(db, projectId, 'broken');
+      const tCancel   = seedTask(db, projectId, 'aborted');
+      const tRunning  = seedTask(db, projectId, 'live');
+      updateTask(db, tComplete!.id, { status: 'completed' });
+      updateTask(db, tFailed!.id,   { status: 'failed' });
+      updateTask(db, tCancel!.id,   { status: 'cancelled' });
+      updateTask(db, tRunning!.id,  { status: 'running' });
+
+      const running = getRunningTasksByProject(db, projectId);
+      expect(running.length).toBe(1);
+      expect(running[0].prompt).toBe('live');
+    });
+
+    it('does not return running tasks from other projects', () => {
+      const otherProjectId = seedProject(db, 'other-project');
+      const t1 = seedTask(db, projectId,      'mine');
+      const t2 = seedTask(db, otherProjectId, 'theirs');
+      updateTask(db, t1!.id, { status: 'running' });
+      updateTask(db, t2!.id, { status: 'running' });
+
+      const mine = getRunningTasksByProject(db, projectId);
+      expect(mine.length).toBe(1);
+      expect(mine[0].prompt).toBe('mine');
     });
   });
 });

@@ -1,7 +1,7 @@
 import type { Db } from '../db/client.js';
 import { insertTopicMessage } from '../db/queries/topicMessages.js';
 import { getLatestSession, insertSession, updateSession } from '../db/queries/sessions.js';
-import { insertTask, updateTask, getRunningTask, getPendingTasks } from '../db/queries/taskQueue.js';
+import { insertTask, updateTask, getRunningTask, getRunningTasksByProject, getPendingTasks } from '../db/queries/taskQueue.js';
 import { getProjectById } from '../db/queries/projects.js';
 import { runCliTask } from './CliStrategy.js';
 import { runCodexTask } from './CodexStrategy.js';
@@ -483,6 +483,39 @@ export class ClaudeSession {
     }
 
     return { summary, appended };
+  }
+
+  // Called once at startup. Cleans up orphaned tasks left over from a previous
+  // process (running tasks whose CLI was killed) and resumes the in-memory
+  // queue if there are still pending tasks waiting.
+  async rehydrate(): Promise<{ orphaned: number; resumed: number }> {
+    const orphans = getRunningTasksByProject(this.db, this.projectId);
+    for (const task of orphans) {
+      const note = '[interrupted by bot restart — re-issue with /task to retry]';
+      updateTask(this.db, task.id, {
+        status: 'failed',
+        result: note,
+        completedAt: new Date(),
+      });
+      const interruptedText = `❌ Task interrupted by bot restart.\n\nPrompt: ${task.prompt.slice(0, 200)}${task.prompt.length > 200 ? '…' : ''}\n\nUse /task to retry.`;
+      try {
+        if (task.liveMessageId) {
+          await this.bot.api.editMessageText(this.chatId, task.liveMessageId, interruptedText);
+        } else {
+          await this.bot.api.sendMessage(this.chatId, interruptedText, { message_thread_id: this.topicId });
+        }
+      } catch {
+        // Message may have been deleted; non-fatal — DB row is already updated.
+      }
+    }
+
+    const pending = getPendingTasks(this.db, this.projectId);
+    if (pending.length > 0) {
+      console.log(`[ClaudeSession ${this.projectName}] Resuming ${pending.length} pending task(s) after restart`);
+      this.processQueue();
+    }
+
+    return { orphaned: orphans.length, resumed: pending.length };
   }
 
   async cancelCurrent() {
