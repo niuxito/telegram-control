@@ -2,7 +2,7 @@ import type { Context } from 'grammy';
 import type { ProjectManager } from '../../../projects/ProjectManager.js';
 import { getRecentTasks, getPendingTasks, cancelPendingTasks, getTaskById } from '../../../db/queries/taskQueue.js';
 import { insertTopicMessage, getRecentTopicMessages, buildConversationContext, resolveContextLimit } from '../../../db/queries/topicMessages.js';
-import { runCodexTask } from '../../../claude/CodexStrategy.js';
+import { getAgent } from '../../../agents/index.js';
 import { parsePrReference, truncateDiff, buildReviewPrompt, MAX_REVIEW_DIFF_CHARS } from './reviewHelpers.js';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -242,7 +242,7 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     }, 5000);
 
     try {
-      const result = await runCodexTask({ prompt: contextualPrompt, cwd: project.localPath });
+      const result = await getAgent('codex').run({ prompt: contextualPrompt, cwd: project.localPath });
       clearInterval(heartbeat);
 
       const body = result.result?.trim() || result.error || '(no output)';
