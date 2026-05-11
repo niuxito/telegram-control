@@ -12,6 +12,10 @@ import type { Db } from '../../../db/client.js';
 const TEST_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT_CHARS = 3800;
 
+// Model used by /plan — pinned to the most-capable Claude available.
+// Per-call override; does NOT change the project's persistent /model setting.
+export const PLANNING_MODEL = 'claude-opus-4-7';
+
 function runProjectTests(cwd: string): Promise<string> {
   return new Promise((resolve) => {
     const child = spawn('npm', ['test', '--', '--reporter=verbose'], {
@@ -263,6 +267,79 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     } catch (err: any) {
       clearInterval(heartbeat);
       await ctx.api.editMessageText(chatId, msgId, `❌ Codex error: ${err.message}`);
+    }
+  });
+
+  // /plan <prompt> — runs Claude with the most-capable model (Opus) for one
+  // turn, without changing the project's default /model. Used for research
+  // and planning where reasoning quality matters more than throughput.
+  bot.command('plan', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) {
+      await ctx.reply('This command must be used in a project topic.');
+      return;
+    }
+    const prompt = (ctx.match as string).trim();
+    if (!prompt) {
+      await ctx.reply(
+        `Usage: /plan <prompt>\n\nRuns the prompt with ${PLANNING_MODEL} for deeper reasoning. ` +
+        `One-shot — does not change the project's /model setting.`
+      );
+      return;
+    }
+
+    const { limit, flagFound, promptClean } = resolveContextLimit(prompt);
+    const finalUserPrompt = promptClean;
+
+    const msg = await ctx.reply(`🧠 Planning with ${PLANNING_MODEL}...`);
+    const chatId = ctx.chat!.id;
+    const msgId = msg.message_id;
+
+    const senderName = ctx.from?.username ?? ctx.from?.first_name ?? 'User';
+    insertTopicMessage(db, { projectId: project.id, sender: 'user', senderName, text: finalUserPrompt });
+
+    const history = getRecentTopicMessages(db, project.id, limit);
+    const context = buildConversationContext(history.slice(0, -1));
+    const contextualPrompt = context ? `${context}Current request: ${finalUserPrompt}` : finalUserPrompt;
+
+    if (flagFound) {
+      await ctx.api.editMessageText(chatId, msgId, `🧠 Planning with ${PLANNING_MODEL} (extended context: ${history.length} messages)...`);
+    }
+
+    let dots = 0;
+    const heartbeat = setInterval(async () => {
+      dots = (dots + 1) % 4;
+      try {
+        await ctx.api.editMessageText(chatId, msgId, `🧠 Planning${'.'.repeat(dots + 1)}`);
+      } catch { /* ignore edit races */ }
+    }, 5000);
+
+    try {
+      const result = await getAgent('claude').run({
+        prompt: contextualPrompt,
+        cwd: project.localPath,
+        model: PLANNING_MODEL,
+      });
+      clearInterval(heartbeat);
+
+      const body = result.result?.trim() || result.error || '(no output)';
+      const header = result.success ? '' : '⚠️ Planning finished with errors\n\n';
+      const cost = result.costUsd ? `💰 $${result.costUsd.toFixed(4)} | ` : '';
+      const footer = `\n\n---\n${cost}🧠 Powered by Claude (${PLANNING_MODEL}, planning lane)`;
+      const full = header + body + footer;
+
+      if (result.result?.trim()) {
+        insertTopicMessage(db, { projectId: project.id, sender: 'claude', text: result.result.trim() });
+      }
+
+      if (full.length > 4096) {
+        await ctx.api.editMessageText(chatId, msgId, full.slice(0, 4093) + '…');
+      } else {
+        await ctx.api.editMessageText(chatId, msgId, full);
+      }
+    } catch (err: any) {
+      clearInterval(heartbeat);
+      await ctx.api.editMessageText(chatId, msgId, `❌ Planning error: ${err.message}`);
     }
   });
 
