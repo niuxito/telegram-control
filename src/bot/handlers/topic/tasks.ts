@@ -270,6 +270,74 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     }
   });
 
+  // /opencode <prompt> — runs the task with OpenCode, the third AI agent.
+  // Provider-agnostic: by default uses whatever OpenCode is configured with.
+  bot.command('opencode', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) {
+      await ctx.reply('This command must be used in a project topic.');
+      return;
+    }
+    const prompt = (ctx.match as string).trim();
+    if (!prompt) {
+      await ctx.reply('Usage: /opencode <prompt>\n\nRuns the task using OpenCode (third AI agent).');
+      return;
+    }
+
+    const { limit, flagFound, promptClean } = resolveContextLimit(prompt);
+    const finalUserPrompt = promptClean;
+
+    const msg = await ctx.reply('🦊 OpenCode is working on it...');
+    const chatId = ctx.chat!.id;
+    const msgId = msg.message_id;
+
+    const senderName = ctx.from?.username ?? ctx.from?.first_name ?? 'User';
+    insertTopicMessage(db, { projectId: project.id, sender: 'user', senderName, text: finalUserPrompt });
+
+    const history = getRecentTopicMessages(db, project.id, limit);
+    const context = buildConversationContext(history.slice(0, -1));
+    const contextualPrompt = context ? `${context}Current request: ${finalUserPrompt}` : finalUserPrompt;
+
+    if (flagFound) {
+      await ctx.api.editMessageText(chatId, msgId, `🦊 OpenCode is working (extended context: ${history.length} messages)...`);
+    }
+
+    let dots = 0;
+    const heartbeat = setInterval(async () => {
+      dots = (dots + 1) % 4;
+      try {
+        await ctx.api.editMessageText(chatId, msgId, `🦊 OpenCode is working${'.'.repeat(dots + 1)}`);
+      } catch { /* ignore edit races */ }
+    }, 5000);
+
+    try {
+      const result = await getAgent('opencode').run({
+        prompt: contextualPrompt,
+        cwd: project.localPath,
+      });
+      clearInterval(heartbeat);
+
+      const body = result.result?.trim() || result.error || '(no output)';
+      const header = result.success ? '' : '⚠️ OpenCode finished with errors\n\n';
+      const cost = result.costUsd ? `💰 $${result.costUsd.toFixed(4)} | ` : '';
+      const footer = `\n\n---\n${cost}🦊 Powered by OpenCode`;
+      const full = header + body + footer;
+
+      if (result.result?.trim()) {
+        insertTopicMessage(db, { projectId: project.id, sender: 'opencode', text: result.result.trim() });
+      }
+
+      if (full.length > 4096) {
+        await ctx.api.editMessageText(chatId, msgId, full.slice(0, 4093) + '…');
+      } else {
+        await ctx.api.editMessageText(chatId, msgId, full);
+      }
+    } catch (err: any) {
+      clearInterval(heartbeat);
+      await ctx.api.editMessageText(chatId, msgId, `❌ OpenCode error: ${err.message}`);
+    }
+  });
+
   // /plan <prompt> — runs Claude with the most-capable model (Opus) for one
   // turn, without changing the project's default /model. Used for research
   // and planning where reasoning quality matters more than throughput.

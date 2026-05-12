@@ -86,7 +86,7 @@ export const projectNotes = sqliteTable('project_notes', {
 export const topicMessages = sqliteTable('topic_messages', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   projectId: integer('project_id').notNull().references(() => projects.id),
-  sender: text('sender', { enum: ['user', 'claude', 'codex'] }).notNull(),
+  sender: text('sender', { enum: ['user', 'claude', 'codex', 'opencode'] }).notNull(),
   senderName: text('sender_name'),
   text: text('text').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),

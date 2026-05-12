@@ -3,7 +3,7 @@
 // this; the rest of the codebase talks to the strategy, not the underlying
 // `runCliTask` / `runCodexTask` functions directly.
 
-export type AgentName = 'claude' | 'codex';
+export type AgentName = 'claude' | 'codex' | 'opencode';
 
 export type AgentErrorType =
   | 'usage_limit'   // ran out of subscription / API credits

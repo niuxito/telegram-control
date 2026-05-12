@@ -20,7 +20,7 @@ export function needsMoreContext(prompt: string): boolean {
 
 export function insertTopicMessage(
   db: Db,
-  data: { projectId: number; sender: 'user' | 'claude' | 'codex'; senderName?: string; text: string; createdAt?: Date }
+  data: { projectId: number; sender: 'user' | 'claude' | 'codex' | 'opencode'; senderName?: string; text: string; createdAt?: Date }
 ): void {
   db.insert(topicMessages).values({
     projectId: data.projectId,
@@ -120,11 +120,13 @@ export function buildConversationContext(
 
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    const isAgent = m.sender === 'claude' || m.sender === 'codex';
+    const isAgent = m.sender === 'claude' || m.sender === 'codex' || m.sender === 'opencode';
     const charLimit = isAgent ? AGENT_MSG_LIMIT : USER_MSG_LIMIT;
     const name = m.sender === 'user'
       ? (m.senderName ?? 'User')
-      : m.sender === 'claude' ? 'Claude' : 'Codex';
+      : m.sender === 'claude' ? 'Claude'
+      : m.sender === 'codex' ? 'Codex'
+      : 'OpenCode';
     const text = isAgent
       ? extractAgentSummary(m.text, charLimit)
       : m.text.length > charLimit ? m.text.slice(0, charLimit) + '…' : m.text;
@@ -144,7 +146,8 @@ export function buildConversationContext(
 
   return (
     `=== CONVERSATION HISTORY (${kept.length} messages) ===\n` +
-    `This is the shared chat log between the user and both AI agents (Claude and Codex).\n` +
+    `This is the shared chat log between the user and the AI agents (Claude, Codex, OpenCode).\n` +
+    `Each message is prefixed by the speaker's label. Use this to keep continuity across turns.\n` +
     `IMPORTANT: This history is complete and authoritative. Do NOT query the database or use shell commands\n` +
     `to look up conversation history — everything you need is already provided here.\n` +
     `If you need older messages not shown here, tell the user to add --more to their request.\n` +

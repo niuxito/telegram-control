@@ -38,6 +38,7 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
       '🤖 Project topic — tasks:\n' +
       '/task <prompt> — run a Claude task\n' +
       '/codex <prompt> — run a task with Codex (ChatGPT subscription)\n' +
+      '/opencode <prompt> — run a task with OpenCode (third AI agent)\n' +
       '/plan <prompt> — one-shot planning with Claude Opus 4.7 (deeper reasoning)\n' +
       '/status — current task status\n' +
       '/queue — show task queue\n' +
@@ -392,6 +393,7 @@ export async function registerBotCommands(bot: any): Promise<void> {
     // Project topic — tasks
     { command: 'task',     description: 'Run a Claude task' },
     { command: 'codex',    description: 'Run a task with Codex (ChatGPT subscription)' },
+    { command: 'opencode', description: 'Run a task with OpenCode (third AI agent)' },
     { command: 'plan',     description: 'Plan with Claude Opus 4.7 (one-shot, deeper reasoning)' },
     { command: 'status',   description: 'Current task status' },
     { command: 'queue',    description: 'Show recent task queue' },

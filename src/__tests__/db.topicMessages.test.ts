@@ -212,6 +212,22 @@ describe('topicMessages — buildConversationContext', () => {
     expect(ctx).toContain('[Codex] codex says hi');
   });
 
+  it('labels OpenCode messages with "OpenCode"', () => {
+    const ctx = buildConversationContext([
+      { sender: 'opencode', senderName: null, text: 'opencode says hi', createdAt: new Date() },
+    ]);
+    expect(ctx).toContain('[OpenCode] opencode says hi');
+  });
+
+  it('treats OpenCode as an agent for the per-message char limit', () => {
+    const longText = 'o'.repeat(3000);
+    const ctx = buildConversationContext([
+      { sender: 'opencode', senderName: null, text: longText, createdAt: new Date() },
+    ]);
+    // Agent limit is 2000 (vs 400 for users) so most of the text survives
+    expect(ctx).toContain('o'.repeat(1000));
+  });
+
   it('truncates long user messages with the USER_MSG_LIMIT (400 chars)', () => {
     const longUser = 'u'.repeat(1000);
     const ctx = buildConversationContext([

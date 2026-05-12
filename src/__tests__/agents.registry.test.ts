@@ -52,9 +52,17 @@ describe('agents registry — getAgent / listAgents', () => {
     expect(typeof a.run).toBe('function');
   });
 
-  it('listAgents returns both registered strategies', () => {
+  it('exposes OpenCode with the expected name/label/icon', () => {
+    const a = getAgent('opencode');
+    expect(a.name).toBe('opencode');
+    expect(a.label).toBe('OpenCode');
+    expect(a.icon).toBe('🦊');
+    expect(typeof a.run).toBe('function');
+  });
+
+  it('listAgents returns every registered strategy', () => {
     const all = listAgents();
-    expect(all.map(a => a.name).sort()).toEqual(['claude', 'codex']);
+    expect(all.map(a => a.name).sort()).toEqual(['claude', 'codex', 'opencode']);
   });
 });
 
