@@ -13,13 +13,20 @@ vi.mock('../config.js', () => ({
   },
 }));
 
-const mockClaudeRun = vi.fn();
+const { mockClaudeRun } = vi.hoisted(() => ({ mockClaudeRun: vi.fn() }));
 vi.mock('../agents/index.js', () => ({
   getAgent: () => ({
     name: 'claude',
     label: 'Claude',
     icon: '🤖',
     run: mockClaudeRun,
+  }),
+  // /plan goes through runWithRouter. Stub it to just call the mocked agent
+  // directly so the test focuses on the handler, not router internals.
+  runWithRouter: async (opts: any) => ({
+    result: await mockClaudeRun(opts),
+    agentUsed: opts.preferredAgent ?? 'claude',
+    fellBack: false,
   }),
 }));
 

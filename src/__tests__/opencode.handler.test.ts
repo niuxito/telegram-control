@@ -13,18 +13,25 @@ vi.mock('../config.js', () => ({
   },
 }));
 
-const mockOpenCodeRun = vi.fn();
-const mockClaudeRun = vi.fn();
-const mockCodexRun = vi.fn();
+const { mockOpenCodeRun, mockClaudeRun, mockCodexRun } = vi.hoisted(() => ({
+  mockOpenCodeRun: vi.fn(),
+  mockClaudeRun: vi.fn(),
+  mockCodexRun: vi.fn(),
+}));
+const agentMap: Record<string, any> = {
+  opencode: { name: 'opencode', label: 'OpenCode', icon: '🦊', run: mockOpenCodeRun },
+  claude:   { name: 'claude',   label: 'Claude',   icon: '🤖', run: mockClaudeRun },
+  codex:    { name: 'codex',    label: 'Codex',    icon: '💻', run: mockCodexRun },
+};
 vi.mock('../agents/index.js', () => ({
-  getAgent: (name: string) => {
-    const map: Record<string, any> = {
-      opencode: { name: 'opencode', label: 'OpenCode', icon: '🦊', run: mockOpenCodeRun },
-      claude:   { name: 'claude',   label: 'Claude',   icon: '🤖', run: mockClaudeRun },
-      codex:    { name: 'codex',    label: 'Codex',    icon: '💻', run: mockCodexRun },
-    };
-    return map[name];
-  },
+  getAgent: (name: string) => agentMap[name],
+  // /opencode goes through runWithRouter. Stub it to call the named agent
+  // directly so the handler test stays focused on handler behaviour.
+  runWithRouter: async (opts: any) => ({
+    result: await agentMap[opts.preferredAgent].run(opts),
+    agentUsed: opts.preferredAgent,
+    fellBack: false,
+  }),
 }));
 
 import { setupTaskHandlers } from '../bot/handlers/topic/tasks.js';

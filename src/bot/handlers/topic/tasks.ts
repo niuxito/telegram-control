@@ -2,7 +2,7 @@ import type { Context } from 'grammy';
 import type { ProjectManager } from '../../../projects/ProjectManager.js';
 import { getRecentTasks, getPendingTasks, cancelPendingTasks, getTaskById } from '../../../db/queries/taskQueue.js';
 import { insertTopicMessage, getRecentTopicMessages, buildConversationContext, resolveContextLimit } from '../../../db/queries/topicMessages.js';
-import { getAgent } from '../../../agents/index.js';
+import { getAgent, runWithRouter } from '../../../agents/index.js';
 import { parsePrReference, truncateDiff, buildReviewPrompt, MAX_REVIEW_DIFF_CHARS } from './reviewHelpers.js';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -246,17 +246,24 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     }, 5000);
 
     try {
-      const result = await getAgent('codex').run({ prompt: contextualPrompt, cwd: project.localPath });
+      const { result, agentUsed, fellBack } = await runWithRouter({
+        prompt: contextualPrompt,
+        cwd: project.localPath,
+        preferredAgent: 'codex',
+        sensitivity: 'project-internal',
+      });
       clearInterval(heartbeat);
 
       const body = result.result?.trim() || result.error || '(no output)';
       const header = result.success ? '' : '⚠️ Codex finished with errors\n\n';
-      const footer = '\n\n— 🤖 Powered by Codex (OpenAI)';
+      const agentLabel = getAgent(agentUsed).label;
+      const degradedNote = fellBack ? ` (auto-degraded from Codex after quota)` : '';
+      const footer = `\n\n— ${getAgent(agentUsed).icon} Powered by ${agentLabel}${degradedNote}`;
       const full = header + body + footer;
 
-      // Save Codex response to shared history
+      // Save response to shared history under the agent that actually answered
       if (result.result?.trim()) {
-        insertTopicMessage(db, { projectId: project.id, sender: 'codex', text: result.result.trim() });
+        insertTopicMessage(db, { projectId: project.id, sender: agentUsed, text: result.result.trim() });
       }
 
       if (full.length > 4096) {
@@ -311,20 +318,24 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     }, 5000);
 
     try {
-      const result = await getAgent('opencode').run({
+      const { result, agentUsed, fellBack } = await runWithRouter({
         prompt: contextualPrompt,
         cwd: project.localPath,
+        preferredAgent: 'opencode',
+        sensitivity: 'project-internal',
       });
       clearInterval(heartbeat);
 
       const body = result.result?.trim() || result.error || '(no output)';
       const header = result.success ? '' : '⚠️ OpenCode finished with errors\n\n';
       const cost = result.costUsd ? `💰 $${result.costUsd.toFixed(4)} | ` : '';
-      const footer = `\n\n---\n${cost}🦊 Powered by OpenCode`;
+      const agentLabel = getAgent(agentUsed).label;
+      const degradedNote = fellBack ? ` (auto-degraded from OpenCode after quota)` : '';
+      const footer = `\n\n---\n${cost}${getAgent(agentUsed).icon} Powered by ${agentLabel}${degradedNote}`;
       const full = header + body + footer;
 
       if (result.result?.trim()) {
-        insertTopicMessage(db, { projectId: project.id, sender: 'opencode', text: result.result.trim() });
+        insertTopicMessage(db, { projectId: project.id, sender: agentUsed, text: result.result.trim() });
       }
 
       if (full.length > 4096) {
@@ -383,21 +394,26 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     }, 5000);
 
     try {
-      const result = await getAgent('claude').run({
+      const { result, agentUsed } = await runWithRouter({
         prompt: contextualPrompt,
         cwd: project.localPath,
         model: PLANNING_MODEL,
+        preferredAgent: 'claude',
+        sensitivity: 'project-internal',
       });
       clearInterval(heartbeat);
 
       const body = result.result?.trim() || result.error || '(no output)';
       const header = result.success ? '' : '⚠️ Planning finished with errors\n\n';
       const cost = result.costUsd ? `💰 $${result.costUsd.toFixed(4)} | ` : '';
-      const footer = `\n\n---\n${cost}🧠 Powered by Claude (${PLANNING_MODEL}, planning lane)`;
+      const lane = agentUsed === 'claude'
+        ? `Claude (${PLANNING_MODEL}, planning lane)`
+        : `${getAgent(agentUsed).label} (auto-degraded from Claude after quota)`;
+      const footer = `\n\n---\n${cost}🧠 Powered by ${lane}`;
       const full = header + body + footer;
 
       if (result.result?.trim()) {
-        insertTopicMessage(db, { projectId: project.id, sender: 'claude', text: result.result.trim() });
+        insertTopicMessage(db, { projectId: project.id, sender: agentUsed, text: result.result.trim() });
       }
 
       if (full.length > 4096) {

@@ -20,3 +20,5 @@ export function listAgents(): AgentStrategy[] {
 }
 
 export type { AgentName, AgentStrategy, AgentRunOptions, AgentRunResult, AgentErrorType } from './types.js';
+export { runWithRouter } from './router.js';
+export type { TaskSensitivity, RoutedRunOptions, RoutedRunResult } from './router.js';
