@@ -4,6 +4,7 @@ import { getRecentTasks, getPendingTasks, cancelPendingTasks, getTaskById } from
 import { insertTopicMessage, getRecentTopicMessages, buildConversationContext, resolveContextLimit } from '../../../db/queries/topicMessages.js';
 import { getAgent, runWithRouter } from '../../../agents/index.js';
 import { parsePrReference, truncateDiff, buildReviewPrompt, MAX_REVIEW_DIFF_CHARS } from './reviewHelpers.js';
+import { setPendingQuotaRetry, buildQuotaRetryPrompt } from './quotaRetry.js';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -254,6 +255,23 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
       });
       clearInterval(heartbeat);
 
+      // Project-internal + usage_limit → offer opt-in fallback (privacy gate)
+      if (!result.success && result.errorType === 'usage_limit') {
+        const userId = ctx.from?.id;
+        if (userId) {
+          const { text, keyboard } = buildQuotaRetryPrompt(userId, 'Codex');
+          await ctx.api.editMessageText(chatId, msgId, text, { reply_markup: keyboard });
+          setPendingQuotaRetry(userId, {
+            prompt: contextualPrompt,
+            cwd: project.localPath,
+            originalAgent: 'codex',
+            projectId: project.id,
+            chatId, topicId: project.topicId!, messageId: msgId,
+          });
+          return;
+        }
+      }
+
       const body = result.result?.trim() || result.error || '(no output)';
       const header = result.success ? '' : '⚠️ Codex finished with errors\n\n';
       const agentLabel = getAgent(agentUsed).label;
@@ -402,6 +420,22 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
         sensitivity: 'project-internal',
       });
       clearInterval(heartbeat);
+
+      if (!result.success && result.errorType === 'usage_limit') {
+        const userId = ctx.from?.id;
+        if (userId) {
+          const { text, keyboard } = buildQuotaRetryPrompt(userId, `Claude (${PLANNING_MODEL})`);
+          await ctx.api.editMessageText(chatId, msgId, text, { reply_markup: keyboard });
+          setPendingQuotaRetry(userId, {
+            prompt: contextualPrompt,
+            cwd: project.localPath,
+            originalAgent: 'claude',
+            projectId: project.id,
+            chatId, topicId: project.topicId!, messageId: msgId,
+          });
+          return;
+        }
+      }
 
       const body = result.result?.trim() || result.error || '(no output)';
       const header = result.success ? '' : '⚠️ Planning finished with errors\n\n';

@@ -34,6 +34,7 @@ import { PLANNING_MODEL, setupTaskHandlers } from '../bot/handlers/topic/tasks.j
 import { createTestDb, type TestDb } from './helpers/testDb.js';
 import { insertProject } from '../db/queries/projects.js';
 import { getRecentTopicMessages } from '../db/queries/topicMessages.js';
+import { getPendingQuotaRetry, clearPendingQuotaRetry } from '../bot/handlers/topic/quotaRetry.js';
 
 function seedProject(db: TestDb, topicId = 100): number {
   const proj = insertProject(db, {
@@ -190,6 +191,77 @@ describe('/plan handler', () => {
     expect(args.prompt).not.toContain('--more');
     const msgs = getRecentTopicMessages(db, projectId);
     expect(msgs[0].text).not.toContain('--more');
+  });
+
+  describe('quota-limit consent flow (PR5)', () => {
+    const USER_ID = 42;
+
+    beforeEach(() => {
+      clearPendingQuotaRetry(USER_ID);
+    });
+
+    it('on usage_limit, shows an inline keyboard instead of an error', async () => {
+      mockClaudeRun.mockResolvedValueOnce({
+        success: false, result: '', error: 'quota exceeded', errorType: 'usage_limit',
+      });
+      const ctx = makeCtx({ match: 'plan something', userId: USER_ID });
+      await bot.handlers['plan'](ctx);
+
+      const lastEdit = ctx.api.editMessageText.mock.calls.at(-1)!;
+      const text = lastEdit[2] as string;
+      const opts = lastEdit[3] as { reply_markup?: any };
+      expect(text).toContain('out of quota');
+      expect(text).toContain('improve the model'); // privacy warning
+      expect(opts?.reply_markup).toBeDefined();
+      const rows = opts!.reply_markup.inline_keyboard as Array<Array<any>>;
+      expect(rows.length).toBe(2);
+      expect(rows[0][0].callback_data).toBe(`quota_retry_opencode:${USER_ID}`);
+      expect(rows[1][0].callback_data).toBe(`quota_cancel:${USER_ID}`);
+    });
+
+    it('stashes the prompt + context for the callback to pick up', async () => {
+      mockClaudeRun.mockResolvedValueOnce({
+        success: false, result: '', error: 'quota', errorType: 'usage_limit',
+      });
+      const ctx = makeCtx({ match: 'design a queue rehydration system', userId: USER_ID });
+      await bot.handlers['plan'](ctx);
+
+      const pending = getPendingQuotaRetry(USER_ID);
+      expect(pending).toBeDefined();
+      expect(pending!.prompt).toContain('design a queue rehydration system');
+      expect(pending!.cwd).toBe('/tmp/test');
+      expect(pending!.originalAgent).toBe('claude');
+      expect(pending!.projectId).toBeGreaterThan(0);
+      expect(pending!.messageId).toBe(555);
+    });
+
+    it('does NOT save the failed attempt to shared history (only successful agent replies are persisted)', async () => {
+      mockClaudeRun.mockResolvedValueOnce({
+        success: false, result: '', errorType: 'usage_limit',
+      });
+      const ctx = makeCtx({ match: 'plan thing', userId: USER_ID });
+      await bot.handlers['plan'](ctx);
+
+      // The user prompt was saved (handler does that before running the agent),
+      // but no agent reply should exist since the agent failed.
+      const msgs = getRecentTopicMessages(db, projectId);
+      const agentMsgs = msgs.filter(m => m.sender !== 'user');
+      expect(agentMsgs.length).toBe(0);
+    });
+
+    it('falls through to the normal error path for non-quota failures', async () => {
+      mockClaudeRun.mockResolvedValueOnce({
+        success: false, result: '', error: 'something else', errorType: 'unknown',
+      });
+      const ctx = makeCtx({ match: 'plan thing', userId: USER_ID });
+      await bot.handlers['plan'](ctx);
+
+      // No pending retry was stashed
+      expect(getPendingQuotaRetry(USER_ID)).toBeUndefined();
+      // The final edit is the error footer, not the consent keyboard
+      const lastEdit = ctx.api.editMessageText.mock.calls.at(-1)!;
+      expect(lastEdit[3]?.reply_markup).toBeUndefined();
+    });
   });
 
   it('reports a footer with no cost when costUsd is missing', async () => {

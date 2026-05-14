@@ -28,6 +28,9 @@ import { confirmCancelKeyboard } from '../keyboards.js';
 import { insertLocalIssue } from '../../db/queries/localIssues.js';
 import { getPendingTasks, getTaskById } from '../../db/queries/taskQueue.js';
 import { config } from '../../config.js';
+import { getAgent } from '../../agents/index.js';
+import { getPendingQuotaRetry, clearPendingQuotaRetry } from './topic/quotaRetry.js';
+import { insertTopicMessage } from '../../db/queries/topicMessages.js';
 
 function isOwner(ctx: CallbackQueryContext<Context>): boolean {
   return ctx.from?.id === config.OWNER_USER_ID;
@@ -214,6 +217,66 @@ export function setupCallbackHandlers(bot: any, projectManager: ProjectManager, 
     await ctx.answerCallbackQuery('Starting Codex...');
     await ctx.editMessageText('🔄 Retrying with Codex (OpenAI)...');
     session.runWithCodex(taskId, task.prompt);
+  });
+
+  // ── Quota retry: opt-in to OpenCode free Zen on usage_limit ───────────────
+  // The router's privacy gate blocks auto-fallback for project-internal tasks;
+  // these buttons let the user explicitly consent (or cancel).
+
+  bot.callbackQuery(/^quota_retry_opencode:(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {
+    const buttonOwner = parseInt(ctx.match[1]);
+    if (ctx.from?.id !== buttonOwner) {
+      await ctx.answerCallbackQuery('This button is for the user who started the task.');
+      return;
+    }
+
+    const retry = getPendingQuotaRetry(buttonOwner);
+    if (!retry) {
+      await ctx.answerCallbackQuery('Retry is no longer available (bot may have restarted).');
+      return;
+    }
+    clearPendingQuotaRetry(buttonOwner);
+
+    await ctx.answerCallbackQuery('Running on OpenCode...');
+    await ctx.editMessageText('🦊 Retrying with OpenCode free tier...');
+
+    try {
+      const result = await getAgent('opencode').run({
+        prompt: retry.prompt,
+        cwd: retry.cwd,
+      });
+
+      const body = result.result?.trim() || result.error || '(no output)';
+      const header = result.success ? '' : '⚠️ OpenCode finished with errors\n\n';
+      const cost = result.costUsd ? `💰 $${result.costUsd.toFixed(4)} | ` : '';
+      const originalLabel = getAgent(retry.originalAgent).label;
+      const footer = `\n\n---\n${cost}🦊 Powered by OpenCode (you opted in after ${originalLabel} quota)`;
+      const full = header + body + footer;
+
+      if (result.result?.trim()) {
+        insertTopicMessage(db, { projectId: retry.projectId, sender: 'opencode', text: result.result.trim() });
+      }
+
+      if (full.length > 4096) {
+        await ctx.editMessageText(full.slice(0, 4093) + '…');
+      } else {
+        await ctx.editMessageText(full);
+      }
+    } catch (err: any) {
+      await ctx.editMessageText(`❌ OpenCode error: ${err.message}`);
+    }
+  });
+
+  bot.callbackQuery(/^quota_cancel:(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {
+    const buttonOwner = parseInt(ctx.match[1]);
+    if (ctx.from?.id !== buttonOwner) {
+      await ctx.answerCallbackQuery('This button is for the user who started the task.');
+      return;
+    }
+
+    clearPendingQuotaRetry(buttonOwner);
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText('✋ Cancelled. Quota retry dismissed.');
   });
 
   // ── GitHub public repo confirmation ───────────────────────────────────────
