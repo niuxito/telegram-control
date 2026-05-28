@@ -6,10 +6,11 @@
 export type AgentName = 'claude' | 'codex' | 'opencode';
 
 export type AgentErrorType =
-  | 'usage_limit'   // ran out of subscription / API credits
-  | 'rate_limit'    // 429-style transient
-  | 'overloaded'    // upstream model overloaded
-  | 'timeout'       // local timeout fired before agent responded
+  | 'usage_limit'    // ran out of subscription / API credits
+  | 'rate_limit'     // 429-style transient
+  | 'overloaded'     // upstream model overloaded
+  | 'timeout'        // local timeout fired before agent responded
+  | 'auth_required'  // login expired / no valid credentials; user must re-authenticate
   | 'unknown';
 
 export interface AgentRunOptions {

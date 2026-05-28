@@ -5,6 +5,11 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CODEX_BIN = path.resolve(__dirname, '../../node_modules/.bin/codex');
 
+// Marker prefix used in CodexRunResult.error when the failure is an auth
+// problem detected by the preflight `codex login status` check. The adapter
+// in src/agents/CodexStrategy.ts maps this to errorType='auth_required'.
+export const CODEX_AUTH_REQUIRED_MARKER = 'auth_required:';
+
 export interface CodexRunOptions {
   prompt: string;
   cwd: string;
@@ -15,6 +20,45 @@ export interface CodexRunResult {
   success: boolean;
   result: string;
   error?: string;
+}
+
+/**
+ * Runs `codex login status` and reports whether the current Codex CLI install
+ * has a valid ChatGPT/OpenAI session. Cheap (sub-second) and side-effect-free.
+ *
+ * Returns { loggedIn, raw } so callers can pass the raw status string through
+ * to the user in the failure path. If the binary itself can't be spawned or
+ * the command takes too long, returns loggedIn=false with raw='probe failed'
+ * so the caller treats it as a definite auth failure rather than guessing.
+ */
+export async function checkCodexAuth(): Promise<{ loggedIn: boolean; raw: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(CODEX_BIN, ['login', 'status'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (c: Buffer) => { out += c.toString(); });
+    child.stderr.on('data', (c: Buffer) => { err += c.toString(); });
+
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve({ loggedIn: false, raw: 'probe failed: timeout' });
+    }, 5_000);
+
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve({ loggedIn: false, raw: `probe failed: ${err.trim() || 'spawn error'}` });
+    });
+
+    child.on('close', () => {
+      clearTimeout(timer);
+      const raw = (out + err).trim();
+      // The CLI prints "Logged in using ChatGPT" or "Logged in using OpenAI API key"
+      // when authenticated, and "Not logged in" otherwise. The negation has to
+      // be checked first because both strings contain "logged in".
+      const loggedIn = /logged in/i.test(raw) && !/not\s+logged in/i.test(raw);
+      resolve({ loggedIn, raw });
+    });
+  });
 }
 
 /** Parses a JSONL line from `codex exec --json` and extracts any visible text.
@@ -49,6 +93,20 @@ function extractTextFromEvent(line: string): string | null {
 
 export async function runCodexTask(options: CodexRunOptions): Promise<CodexRunResult> {
   const { prompt, cwd, onTextChunk } = options;
+
+  // Preflight: cheap login probe. `codex exec` in non-interactive mode fails
+  // silently when the OAuth session has expired (exit code != 0, stderr only
+  // contains the "Reading prompt from stdin..." banner). Catching it here gives
+  // the user an actionable message instead of a confusing "finished with errors".
+  const auth = await checkCodexAuth();
+  if (!auth.loggedIn) {
+    console.warn(`[CodexStrategy] Auth probe failed: ${auth.raw}`);
+    return {
+      success: false,
+      result: '',
+      error: `${CODEX_AUTH_REQUIRED_MARKER} ${auth.raw}`,
+    };
+  }
 
   const args = [
     'exec',

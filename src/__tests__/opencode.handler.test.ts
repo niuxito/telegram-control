@@ -190,3 +190,57 @@ describe('/opencode handler', () => {
     expect(senders).not.toContain('codex');
   });
 });
+
+describe('/codex handler — auth_required branch', () => {
+  let db: TestDb;
+  let projectId: number;
+  let bot: ReturnType<typeof makeBotStub>;
+  let projectManager: ReturnType<typeof makeProjectManager>;
+
+  beforeEach(() => {
+    ({ db } = createTestDb());
+    projectId = seedProject(db);
+    bot = makeBotStub();
+    projectManager = makeProjectManager(projectId);
+    mockCodexRun.mockReset();
+    setupTaskHandlers(bot as any, projectManager as any, db);
+  });
+
+  it('shows an actionable re-login message when Codex auth expired', async () => {
+    mockCodexRun.mockResolvedValueOnce({
+      success: false, result: '', error: 'auth_required: Not logged in',
+      errorType: 'auth_required',
+    });
+    const ctx = makeCtx({ match: 'do thing', userId: 1 });
+    await bot.handlers['codex'](ctx);
+
+    const finalText = ctx.api.editMessageText.mock.calls.at(-1)![2] as string;
+    expect(finalText).toContain('sesión de Codex');
+    expect(finalText).toContain('expirado');
+    expect(finalText).toContain('codex login --device-auth');
+  });
+
+  it('does NOT save anything to shared history when auth fails', async () => {
+    mockCodexRun.mockResolvedValueOnce({
+      success: false, result: '', error: 'auth_required: ...',
+      errorType: 'auth_required',
+    });
+    const ctx = makeCtx({ match: 'do thing', userId: 1 });
+    await bot.handlers['codex'](ctx);
+
+    const msgs = getRecentTopicMessages(db, projectId);
+    const agentMsgs = msgs.filter(m => m.sender !== 'user');
+    expect(agentMsgs.length).toBe(0);
+  });
+
+  it('does NOT offer the OpenCode consent keyboard for auth_required (different problem)', async () => {
+    mockCodexRun.mockResolvedValueOnce({
+      success: false, result: '', errorType: 'auth_required',
+    });
+    const ctx = makeCtx({ match: 'do thing', userId: 1 });
+    await bot.handlers['codex'](ctx);
+
+    const lastEdit = ctx.api.editMessageText.mock.calls.at(-1)!;
+    expect(lastEdit[3]?.reply_markup).toBeUndefined();
+  });
+});

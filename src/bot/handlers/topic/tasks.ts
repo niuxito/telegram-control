@@ -255,6 +255,19 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
       });
       clearInterval(heartbeat);
 
+      // Codex auth expired → actionable message, no spawn of exec wasted
+      if (!result.success && result.errorType === 'auth_required') {
+        await ctx.api.editMessageText(chatId, msgId,
+          '🔑 La sesión de Codex con OpenAI ha expirado.\n\n' +
+          'Necesita re-autenticarse para que /codex y el fallback automático ' +
+          'vuelvan a funcionar. Usa /codex-login desde este topic (próximamente, ' +
+          'flujo OAuth device desde Telegram) o, mientras tanto, ejecuta en la Pi:\n\n' +
+          '`codex login --device-auth`\n\n' +
+          'Mientras tanto puedes seguir con /task (Claude) o /opencode.'
+        );
+        return;
+      }
+
       // Project-internal + usage_limit → offer opt-in fallback (privacy gate)
       if (!result.success && result.errorType === 'usage_limit') {
         const userId = ctx.from?.id;

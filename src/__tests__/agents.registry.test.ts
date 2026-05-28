@@ -29,6 +29,7 @@ vi.mock('../claude/CodexStrategy.js', () => ({
     success: true,
     result: 'codex reply',
   }),
+  CODEX_AUTH_REQUIRED_MARKER: 'auth_required:',
 }));
 
 import { getAgent, listAgents } from '../agents/index.js';
@@ -156,6 +157,34 @@ describe('CodexStrategy.run', () => {
     });
     const r = await getAgent('codex').run({ prompt: 'p', cwd: '/x' });
     expect(r.errorType).toBe('unknown');
+  });
+
+  it('classifies the explicit auth_required: marker (preflight)', async () => {
+    vi.mocked(runCodexTask).mockResolvedValueOnce({
+      success: false, result: '', error: 'auth_required: Not logged in',
+    });
+    const r = await getAgent('codex').run({ prompt: 'p', cwd: '/x' });
+    expect(r.errorType).toBe('auth_required');
+  });
+
+  it('classifies "not logged in" heuristically as auth_required', async () => {
+    vi.mocked(runCodexTask).mockResolvedValueOnce({
+      success: false, result: '', error: 'Error: not logged in. Run codex login.',
+    });
+    const r = await getAgent('codex').run({ prompt: 'p', cwd: '/x' });
+    expect(r.errorType).toBe('auth_required');
+  });
+
+  it('classifies "session expired" / "unauthorized" as auth_required', async () => {
+    vi.mocked(runCodexTask).mockResolvedValueOnce({
+      success: false, result: '', error: 'OAuth session expired',
+    });
+    expect((await getAgent('codex').run({ prompt: 'p', cwd: '/x' })).errorType).toBe('auth_required');
+
+    vi.mocked(runCodexTask).mockResolvedValueOnce({
+      success: false, result: '', error: '401 Unauthorized',
+    });
+    expect((await getAgent('codex').run({ prompt: 'p', cwd: '/x' })).errorType).toBe('auth_required');
   });
 
   it('leaves errorType undefined on successful runs', async () => {

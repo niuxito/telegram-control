@@ -1,4 +1,4 @@
-import { runCodexTask } from '../claude/CodexStrategy.js';
+import { runCodexTask, CODEX_AUTH_REQUIRED_MARKER } from '../claude/CodexStrategy.js';
 import type { AgentErrorType, AgentRunOptions, AgentRunResult, AgentStrategy } from './types.js';
 
 // Adapter that wraps the existing runCodexTask CLI driver behind the common
@@ -9,11 +9,15 @@ import type { AgentErrorType, AgentRunOptions, AgentRunResult, AgentStrategy } f
 // identify the pattern; otherwise it stays 'unknown'.
 function classifyCodexError(err: string | undefined): AgentErrorType | undefined {
   if (!err) return undefined;
+  // Preflight auth check uses an explicit marker, so we don't have to guess.
+  if (err.startsWith(CODEX_AUTH_REQUIRED_MARKER)) return 'auth_required';
   const t = err.toLowerCase();
   if (t.includes('timed out') || t.includes('timeout')) return 'timeout';
   if (t.includes('quota') || t.includes('usage limit')) return 'usage_limit';
   if (t.includes('rate limit') || t.includes('429')) return 'rate_limit';
   if (t.includes('overloaded')) return 'overloaded';
+  // Heuristic auth patterns in case codex exec itself ever surfaces them.
+  if (/not logged in|session expired|unauthor/i.test(err)) return 'auth_required';
   return 'unknown';
 }
 
