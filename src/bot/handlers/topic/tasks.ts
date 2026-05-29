@@ -259,11 +259,9 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
       if (!result.success && result.errorType === 'auth_required') {
         await ctx.api.editMessageText(chatId, msgId,
           '🔑 La sesión de Codex con OpenAI ha expirado.\n\n' +
-          'Necesita re-autenticarse para que /codex y el fallback automático ' +
-          'vuelvan a funcionar. Usa /codex-login desde este topic (próximamente, ' +
-          'flujo OAuth device desde Telegram) o, mientras tanto, ejecuta en la Pi:\n\n' +
-          '`codex login --device-auth`\n\n' +
-          'Mientras tanto puedes seguir con /task (Claude) o /opencode.'
+          'Usa /codex-login para re-autenticar desde el móvil (te doy un ' +
+          'enlace y un código). Mientras tanto puedes seguir con /task ' +
+          '(Claude) o /opencode.'
         );
         return;
       }

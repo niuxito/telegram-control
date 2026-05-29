@@ -31,6 +31,7 @@ import { config } from '../../config.js';
 import { getAgent } from '../../agents/index.js';
 import { getPendingQuotaRetry, clearPendingQuotaRetry } from './topic/quotaRetry.js';
 import { insertTopicMessage } from '../../db/queries/topicMessages.js';
+import { getPendingCodexLogin, clearPendingCodexLogin } from './topic/codexLogin.js';
 
 function isOwner(ctx: CallbackQueryContext<Context>): boolean {
   return ctx.from?.id === config.OWNER_USER_ID;
@@ -265,6 +266,25 @@ export function setupCallbackHandlers(bot: any, projectManager: ProjectManager, 
     } catch (err: any) {
       await ctx.editMessageText(`❌ OpenCode error: ${err.message}`);
     }
+  });
+
+  // ── Cancel codex device-auth in progress ──────────────────────────────────
+
+  bot.callbackQuery(/^codex_login_cancel:(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {
+    const buttonOwner = parseInt(ctx.match[1]);
+    if (ctx.from?.id !== buttonOwner) {
+      await ctx.answerCallbackQuery('This button is for the user who started the login.');
+      return;
+    }
+    const pending = getPendingCodexLogin(buttonOwner);
+    if (!pending) {
+      await ctx.answerCallbackQuery('Login is no longer in progress.');
+      return;
+    }
+    pending.handle.cancel();
+    clearPendingCodexLogin(buttonOwner);
+    await ctx.answerCallbackQuery('Login cancelled.');
+    // The onCancelled callback from startCodexDeviceAuth will edit the message.
   });
 
   bot.callbackQuery(/^quota_cancel:(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {

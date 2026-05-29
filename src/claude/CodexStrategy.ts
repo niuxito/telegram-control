@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CODEX_BIN = path.resolve(__dirname, '../../node_modules/.bin/codex');
+export const CODEX_BIN = path.resolve(__dirname, '../../node_modules/.bin/codex');
 
 // Marker prefix used in CodexRunResult.error when the failure is an auth
 // problem detected by the preflight `codex login status` check. The adapter
