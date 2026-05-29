@@ -108,11 +108,15 @@ export async function runCodexTask(options: CodexRunOptions): Promise<CodexRunRe
     };
   }
 
+  // gpt-5.2-codex (the CLI default) only works with OpenAI API keys.
+  // ChatGPT accounts require a model from the ChatGPT-compatible list;
+  // gpt-5.4-mini is the cheapest option confirmed to work.
   const args = [
     'exec',
     '--json',
     '--dangerously-bypass-approvals-and-sandbox',
     '--ephemeral',
+    '-m', 'gpt-5.4-mini',
     '-C', cwd,
   ];
 
