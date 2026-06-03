@@ -5,11 +5,15 @@ import { getTasksSince } from '../../db/queries/taskQueue.js';
 import { config } from '../../config.js';
 import type { Db } from '../../db/client.js';
 import { setupCodexLoginHandler } from './topic/codexLogin.js';
+import { setupIdeasHandler } from './ideas.js';
 
 export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db: Db): void {
   // Codex device-auth flow — works from any chat (DM or topic) since it's a
   // global concern (Codex login is per-host, not per-project).
   setupCodexLoginHandler(bot);
+
+  // Project-ideas backlog — global, not project-scoped.
+  setupIdeasHandler(bot, db);
   bot.command('start', async (ctx: Context) => {
     await ctx.reply(
       '🤖 *Telegram Control Center*\n\nManage your Claude Code projects from Telegram.\n\n' +
@@ -29,6 +33,10 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
       '/summary [hours] — activity summary (default: last 24h)\n' +
       '/uptime — server CPU, RAM, disk and bot uptime\n' +
       '/help — show this message\n' +
+      '/idea <text> — save a project idea for later\n' +
+      '/idea list — show the ideas backlog\n' +
+      '/idea delete <id> — remove an idea\n' +
+      '/idea clear — clear all ideas\n' +
       '/guest add|remove|list — manage guest users\n' +
       '/guest requests — pending access requests\n' +
       '/guest approve|deny <id> — approve/deny access request\n' +
@@ -387,6 +395,7 @@ export async function registerBotCommands(bot: any): Promise<void> {
     { command: 'summary',       description: 'Activity summary (default last 24h)' },
     { command: 'uptime',        description: 'Server CPU, RAM, disk and bot uptime' },
     { command: 'help',          description: 'Show command help' },
+    { command: 'idea',          description: 'Save a project idea, or list/delete/clear (global backlog)' },
     { command: 'guest',         description: 'Manage guests: add|remove|list|requests|approve|deny' },
     { command: 'requestaccess', description: 'Request read-only guest access' },
 

@@ -83,6 +83,17 @@ export const projectNotes = sqliteTable('project_notes', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
+// Global backlog of project ideas, not tied to any existing project. Anyone
+// with access to the bot (owner or guest) can add an idea via /idea <text>.
+// addedBy / addedByName are optional so we can credit ideas in /idea list.
+export const ideas = sqliteTable('ideas', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  text: text('text').notNull(),
+  addedBy: integer('added_by'),
+  addedByName: text('added_by_name'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+});
+
 export const topicMessages = sqliteTable('topic_messages', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   projectId: integer('project_id').notNull().references(() => projects.id),

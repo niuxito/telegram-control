@@ -133,6 +133,7 @@ async function main() {
   try { sqlite.exec(`ALTER TABLE projects ADD COLUMN budget_usd REAL`); } catch { /* already exists */ }
   try { sqlite.exec(`CREATE TABLE IF NOT EXISTS project_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), text TEXT NOT NULL, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
   try { sqlite.exec(`CREATE TABLE IF NOT EXISTS topic_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), sender TEXT NOT NULL, sender_name TEXT, text TEXT NOT NULL, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
+  try { sqlite.exec(`CREATE TABLE IF NOT EXISTS ideas (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, added_by INTEGER, added_by_name TEXT, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
 
   // 2. Create bot
   const bot = createBot();
