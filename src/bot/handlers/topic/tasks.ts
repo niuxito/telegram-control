@@ -12,10 +12,70 @@ import type { Db } from '../../../db/client.js';
 
 const TEST_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT_CHARS = 3800;
+const TELEGRAM_MESSAGE_LIMIT = 4096;
 
 // Model used by /plan — pinned to the most-capable Claude available.
 // Per-call override; does NOT change the project's persistent /model setting.
 export const PLANNING_MODEL = 'claude-opus-4-7';
+
+function buildTopicPrompt(
+  db: Db,
+  projectId: number,
+  senderName: string,
+  prompt: string,
+  limit: number,
+): { historyLength: number; contextualPrompt: string } {
+  insertTopicMessage(db, { projectId, sender: 'user', senderName, text: prompt });
+
+  const history = getRecentTopicMessages(db, projectId, limit);
+  const context = buildConversationContext(history.slice(0, -1));
+  return {
+    historyLength: history.length,
+    contextualPrompt: context ? `${context}Current request: ${prompt}` : prompt,
+  };
+}
+
+async function publishTopicMessage(
+  ctx: Context,
+  chatId: number,
+  topicId: number,
+  messageId: number,
+  text: string,
+  options?: Record<string, unknown>,
+): Promise<void> {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > TELEGRAM_MESSAGE_LIMIT) {
+    chunks.push(remaining.slice(0, TELEGRAM_MESSAGE_LIMIT));
+    remaining = remaining.slice(TELEGRAM_MESSAGE_LIMIT);
+  }
+  chunks.push(remaining);
+
+  const firstChunk = chunks[0];
+  try {
+    await ctx.api.editMessageText(chatId, messageId, firstChunk, options);
+  } catch (err) {
+    console.warn('[topic/tasks] editMessageText failed, sending a replacement message:', err instanceof Error ? err.message : err);
+    try {
+      await ctx.api.sendMessage(chatId, firstChunk, {
+        message_thread_id: topicId,
+        ...options,
+      });
+    } catch (sendErr) {
+      console.warn('[topic/tasks] sendMessage fallback failed:', sendErr instanceof Error ? sendErr.message : sendErr);
+    }
+  }
+
+  for (const chunk of chunks.slice(1)) {
+    try {
+      await ctx.api.sendMessage(chatId, chunk, {
+        message_thread_id: topicId,
+      });
+    } catch (err) {
+      console.warn('[topic/tasks] chunk send failed:', err instanceof Error ? err.message : err);
+    }
+  }
+}
 
 function runProjectTests(cwd: string): Promise<string> {
   return new Promise((resolve) => {
@@ -225,17 +285,23 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     const chatId = ctx.chat!.id;
     const msgId = msg.message_id;
 
-    // Save user message to shared history (without the --more flag)
     const senderName = ctx.from?.username ?? ctx.from?.first_name ?? 'User';
-    insertTopicMessage(db, { projectId: project.id, sender: 'user', senderName, text: finalUserPrompt });
-
-    // Build prompt with conversation context
-    const history = getRecentTopicMessages(db, project.id, limit);
-    const context = buildConversationContext(history.slice(0, -1));
-    const contextualPrompt = context ? `${context}Current request: ${finalUserPrompt}` : finalUserPrompt;
+    const { historyLength, contextualPrompt } = buildTopicPrompt(
+      db,
+      project.id,
+      senderName,
+      finalUserPrompt,
+      limit,
+    );
 
     if (flagFound) {
-      await ctx.api.editMessageText(chatId, msgId, `🤖 Codex is working on it (with extended context: ${history.length} messages)...`);
+      await publishTopicMessage(
+        ctx,
+        chatId,
+        project.topicId!,
+        msgId,
+        `🤖 Codex is working on it (with extended context: ${historyLength} messages)...`,
+      );
     }
 
     let dots = 0;
@@ -257,7 +323,7 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
 
       // Codex auth expired → actionable message, no spawn of exec wasted
       if (!result.success && result.errorType === 'auth_required') {
-        await ctx.api.editMessageText(chatId, msgId,
+        await publishTopicMessage(ctx, chatId, project.topicId!, msgId,
           '🔑 La sesión de Codex con OpenAI ha expirado.\n\n' +
           'Usa /codex-login para re-autenticar desde el móvil (te doy un ' +
           'enlace y un código). Mientras tanto puedes seguir con /task ' +
@@ -271,7 +337,7 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
         const userId = ctx.from?.id;
         if (userId) {
           const { text, keyboard } = buildQuotaRetryPrompt(userId, 'Codex');
-          await ctx.api.editMessageText(chatId, msgId, text, { reply_markup: keyboard });
+          await publishTopicMessage(ctx, chatId, project.topicId!, msgId, text, { reply_markup: keyboard });
           setPendingQuotaRetry(userId, {
             prompt: contextualPrompt,
             cwd: project.localPath,
@@ -295,14 +361,10 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
         insertTopicMessage(db, { projectId: project.id, sender: agentUsed, text: result.result.trim() });
       }
 
-      if (full.length > 4096) {
-        await ctx.api.editMessageText(chatId, msgId, full.slice(0, 4093) + '…');
-      } else {
-        await ctx.api.editMessageText(chatId, msgId, full);
-      }
+      await publishTopicMessage(ctx, chatId, project.topicId!, msgId, full);
     } catch (err: any) {
       clearInterval(heartbeat);
-      await ctx.api.editMessageText(chatId, msgId, `❌ Codex error: ${err.message}`);
+      await publishTopicMessage(ctx, chatId, project.topicId!, msgId, `❌ Codex error: ${err.message}`);
     }
   });
 

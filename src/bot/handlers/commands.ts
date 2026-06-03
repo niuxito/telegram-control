@@ -35,6 +35,8 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
       '/help — show this message\n' +
       '/idea <text> — save a project idea for later\n' +
       '/idea list — show the ideas backlog\n' +
+      '/idea show <id> — show one idea as a thread\n' +
+      '/idea append <id> <text> — add more detail to an idea\n' +
       '/idea delete <id> — remove an idea\n' +
       '/idea clear — clear all ideas\n' +
       '/guest add|remove|list — manage guest users\n' +

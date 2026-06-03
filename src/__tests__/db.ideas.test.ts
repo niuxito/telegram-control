@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTestDb, type TestDb } from './helpers/testDb.js';
-import { insertIdea, getRecentIdeas, deleteIdea, clearIdeas } from '../db/queries/ideas.js';
+import {
+  insertIdea,
+  getRecentIdeas,
+  deleteIdea,
+  clearIdeas,
+  appendIdeaEntry,
+  getIdeaById,
+  getIdeaEntries,
+  getIdeaThread,
+} from '../db/queries/ideas.js';
 
 describe('DB — ideas queries', () => {
   let db: TestDb;
@@ -98,6 +107,118 @@ describe('DB — ideas queries', () => {
       insertIdea(db, 'c');
       expect(clearIdeas(db)).toBe(3);
       expect(getRecentIdeas(db)).toEqual([]);
+    });
+  });
+
+  describe('appendIdeaEntry / getIdeaEntries', () => {
+    it('appends an entry to an existing idea', () => {
+      const idea = insertIdea(db, 'main idea');
+      const entry = appendIdeaEntry(db, idea.id, 'first note', { addedBy: 7, addedByName: 'alice' });
+      expect(entry).toBeDefined();
+      expect(entry!.ideaId).toBe(idea.id);
+      expect(entry!.text).toBe('first note');
+      expect(entry!.addedBy).toBe(7);
+      expect(entry!.addedByName).toBe('alice');
+    });
+
+    it('returns undefined when appending to a non-existent idea', () => {
+      expect(appendIdeaEntry(db, 9999, 'note')).toBeUndefined();
+    });
+
+    it('getIdeaEntries returns entries in chronological order', () => {
+      const idea = insertIdea(db, 'main');
+      const t0 = new Date('2026-01-01T00:00:00Z').getTime();
+      appendIdeaEntry(db, idea.id, 'first',  { createdAt: new Date(t0) });
+      appendIdeaEntry(db, idea.id, 'second', { createdAt: new Date(t0 + 1000) });
+      appendIdeaEntry(db, idea.id, 'third',  { createdAt: new Date(t0 + 2000) });
+      expect(getIdeaEntries(db, idea.id).map(e => e.text)).toEqual(['first', 'second', 'third']);
+    });
+
+    it('entries from one idea do not bleed into another', () => {
+      const a = insertIdea(db, 'A');
+      const b = insertIdea(db, 'B');
+      appendIdeaEntry(db, a.id, 'belongs to A');
+      appendIdeaEntry(db, b.id, 'belongs to B');
+      expect(getIdeaEntries(db, a.id).map(e => e.text)).toEqual(['belongs to A']);
+      expect(getIdeaEntries(db, b.id).map(e => e.text)).toEqual(['belongs to B']);
+    });
+  });
+
+  describe('getIdeaThread', () => {
+    it('returns the idea plus its ordered entries', () => {
+      const idea = insertIdea(db, 'headline', { addedByName: 'alice' });
+      const t0 = new Date('2026-01-01T00:00:00Z').getTime();
+      appendIdeaEntry(db, idea.id, 'add one', { addedByName: 'bob',     createdAt: new Date(t0) });
+      appendIdeaEntry(db, idea.id, 'add two', { addedByName: 'charlie', createdAt: new Date(t0 + 1000) });
+      const thread = getIdeaThread(db, idea.id);
+      expect(thread).toBeDefined();
+      expect(thread!.idea.text).toBe('headline');
+      expect(thread!.entries.map(e => e.text)).toEqual(['add one', 'add two']);
+      expect(thread!.entries.map(e => e.addedByName)).toEqual(['bob', 'charlie']);
+    });
+
+    it('returns undefined when the idea does not exist', () => {
+      expect(getIdeaThread(db, 9999)).toBeUndefined();
+    });
+
+    it('returns an empty entries list when the idea has no notes yet', () => {
+      const idea = insertIdea(db, 'lonely');
+      const thread = getIdeaThread(db, idea.id);
+      expect(thread!.entries).toEqual([]);
+    });
+  });
+
+  describe('getIdeaById', () => {
+    it('returns the matching idea', () => {
+      const idea = insertIdea(db, 'find me');
+      expect(getIdeaById(db, idea.id)?.text).toBe('find me');
+    });
+
+    it('returns undefined for a missing id', () => {
+      expect(getIdeaById(db, 9999)).toBeUndefined();
+    });
+  });
+
+  describe('getRecentIdeas — entryCount', () => {
+    it('reports 0 for ideas without entries', () => {
+      insertIdea(db, 'alone');
+      const [item] = getRecentIdeas(db);
+      expect(item.entryCount).toBe(0);
+    });
+
+    it('reports the correct number of entries per idea', () => {
+      const a = insertIdea(db, 'A');
+      const b = insertIdea(db, 'B');
+      appendIdeaEntry(db, a.id, 'a1');
+      appendIdeaEntry(db, a.id, 'a2');
+      appendIdeaEntry(db, a.id, 'a3');
+      appendIdeaEntry(db, b.id, 'b1');
+      const items = getRecentIdeas(db);
+      const ideaA = items.find(i => i.text === 'A')!;
+      const ideaB = items.find(i => i.text === 'B')!;
+      expect(ideaA.entryCount).toBe(3);
+      expect(ideaB.entryCount).toBe(1);
+    });
+  });
+
+  describe('cascade delete', () => {
+    it('deleteIdea also removes its entries', () => {
+      const idea = insertIdea(db, 'doomed');
+      appendIdeaEntry(db, idea.id, 'note 1');
+      appendIdeaEntry(db, idea.id, 'note 2');
+      expect(getIdeaEntries(db, idea.id).length).toBe(2);
+      deleteIdea(db, idea.id);
+      expect(getIdeaEntries(db, idea.id)).toEqual([]);
+    });
+
+    it('clearIdeas removes every entry across every idea', () => {
+      const a = insertIdea(db, 'A');
+      const b = insertIdea(db, 'B');
+      appendIdeaEntry(db, a.id, 'a1');
+      appendIdeaEntry(db, b.id, 'b1');
+      clearIdeas(db);
+      expect(getIdeaEntries(db, a.id)).toEqual([]);
+      expect(getIdeaEntries(db, b.id)).toEqual([]);
     });
   });
 });

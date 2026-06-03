@@ -94,6 +94,17 @@ export const ideas = sqliteTable('ideas', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
+// Append-only history for an idea. The original ideas.text is the title/headline;
+// each entry expands the idea over time, similar to an issue timeline.
+export const ideaEntries = sqliteTable('idea_entries', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ideaId: integer('idea_id').notNull().references(() => ideas.id, { onDelete: 'cascade' }),
+  text: text('text').notNull(),
+  addedBy: integer('added_by'),
+  addedByName: text('added_by_name'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+});
+
 export const topicMessages = sqliteTable('topic_messages', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   projectId: integer('project_id').notNull().references(() => projects.id),

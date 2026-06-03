@@ -10,7 +10,12 @@ vi.mock('../config.js', () => ({
 
 import { setupIdeasHandler } from '../bot/handlers/ideas.js';
 import { createTestDb, type TestDb } from './helpers/testDb.js';
-import { insertIdea, getRecentIdeas } from '../db/queries/ideas.js';
+import {
+  insertIdea,
+  getRecentIdeas,
+  appendIdeaEntry,
+  getIdeaEntries,
+} from '../db/queries/ideas.js';
 
 function makeBotStub() {
   const handlers: Record<string, Function> = {};
@@ -129,5 +134,102 @@ describe('/idea handler', () => {
     const reply = ctx.reply.mock.calls[0][0] as string;
     expect(reply).toContain('(bob)');
     expect(reply).toContain('shared idea');
+  });
+
+  it('/idea list shows entry counts when notes have been appended', async () => {
+    const idea = insertIdea(db, 'growing idea');
+    appendIdeaEntry(db, idea.id, 'note 1');
+    appendIdeaEntry(db, idea.id, 'note 2');
+    const ctx = makeCtx({ match: 'list' });
+    await bot.handlers['idea'](ctx);
+    const reply = ctx.reply.mock.calls[0][0] as string;
+    expect(reply).toContain('growing idea');
+    expect(reply).toContain('2 notes');
+  });
+
+  it('/idea list omits the count marker for ideas with no entries', async () => {
+    insertIdea(db, 'fresh idea');
+    const ctx = makeCtx({ match: 'list' });
+    await bot.handlers['idea'](ctx);
+    const reply = ctx.reply.mock.calls[0][0] as string;
+    expect(reply).not.toContain('notes]');
+    expect(reply).not.toContain('note]');
+  });
+
+  describe('/idea show', () => {
+    it('renders headline + chronological timeline of entries', async () => {
+      const idea = insertIdea(db, 'main idea', { addedByName: 'alice' });
+      appendIdeaEntry(db, idea.id, 'first follow-up',  { addedByName: 'bob' });
+      appendIdeaEntry(db, idea.id, 'second follow-up', { addedByName: 'charlie' });
+      const ctx = makeCtx({ match: `show ${idea.id}` });
+      await bot.handlers['idea'](ctx);
+      const reply = ctx.reply.mock.calls[0][0] as string;
+      expect(reply).toContain('main idea');
+      expect(reply).toContain('first follow-up');
+      expect(reply).toContain('second follow-up');
+      // Order must be first → second
+      expect(reply.indexOf('first follow-up')).toBeLessThan(reply.indexOf('second follow-up'));
+    });
+
+    it('hints to use /idea append when the idea has no entries yet', async () => {
+      const idea = insertIdea(db, 'lonely');
+      const ctx = makeCtx({ match: `show ${idea.id}` });
+      await bot.handlers['idea'](ctx);
+      const reply = ctx.reply.mock.calls[0][0] as string;
+      expect(reply).toContain('No extra notes');
+      expect(reply).toContain('/idea append');
+    });
+
+    it('reports not found when the id does not exist', async () => {
+      const ctx = makeCtx({ match: 'show 9999' });
+      await bot.handlers['idea'](ctx);
+      expect(ctx.reply).toHaveBeenCalledWith('❌ Idea 9999 not found.');
+    });
+
+    it('reports usage hint when no id is supplied', async () => {
+      const ctx = makeCtx({ match: 'show' });
+      await bot.handlers['idea'](ctx);
+      expect(ctx.reply).toHaveBeenCalledWith('Usage: /idea show <id>');
+    });
+  });
+
+  describe('/idea append', () => {
+    it('adds an entry crediting the author', async () => {
+      const idea = insertIdea(db, 'parent');
+      const ctx = makeCtx({ match: `append ${idea.id} new detail`, userId: 13, username: 'derek' });
+      await bot.handlers['idea'](ctx);
+      expect(ctx.reply).toHaveBeenCalledWith(`✍️ Added a note to idea ${idea.id}.`);
+      const [entry] = getIdeaEntries(db, idea.id);
+      expect(entry.text).toBe('new detail');
+      expect(entry.addedBy).toBe(13);
+      expect(entry.addedByName).toBe('derek');
+    });
+
+    it('preserves multi-word note bodies', async () => {
+      const idea = insertIdea(db, 'parent');
+      const ctx = makeCtx({ match: `append ${idea.id} this has multiple words and spaces` });
+      await bot.handlers['idea'](ctx);
+      const [entry] = getIdeaEntries(db, idea.id);
+      expect(entry.text).toBe('this has multiple words and spaces');
+    });
+
+    it('reports not found when the idea does not exist', async () => {
+      const ctx = makeCtx({ match: 'append 9999 some note' });
+      await bot.handlers['idea'](ctx);
+      expect(ctx.reply).toHaveBeenCalledWith('❌ Idea 9999 not found.');
+    });
+
+    it('reports usage hint when the id is non-numeric', async () => {
+      const ctx = makeCtx({ match: 'append oops some note' });
+      await bot.handlers['idea'](ctx);
+      expect(ctx.reply).toHaveBeenCalledWith('Usage: /idea append <id> <text>');
+    });
+
+    it('reports usage hint when the note body is empty', async () => {
+      const idea = insertIdea(db, 'parent');
+      const ctx = makeCtx({ match: `append ${idea.id}` });
+      await bot.handlers['idea'](ctx);
+      expect(ctx.reply).toHaveBeenCalledWith('Usage: /idea append <id> <text>');
+    });
   });
 });

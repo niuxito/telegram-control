@@ -112,6 +112,15 @@ export function createTestDb() {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS idea_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idea_id INTEGER NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
+      text TEXT NOT NULL,
+      added_by INTEGER,
+      added_by_name TEXT,
+      created_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS notification_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       project_id INTEGER NOT NULL REFERENCES projects(id),

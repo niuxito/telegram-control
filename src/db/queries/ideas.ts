@@ -1,45 +1,105 @@
 import { desc, eq } from 'drizzle-orm';
 import type { Db } from '../client.js';
-import { ideas } from '../schema.js';
+import { ideaEntries, ideas } from '../schema.js';
 
-// Idea = a project we *might* build later. Global, not tied to a project.
-// Lifecycle: /idea <text> → insert; /idea list → show; /idea delete <id> /
-// /idea clear → remove.
+export type Idea = typeof ideas.$inferSelect;
+export type IdeaEntry = typeof ideaEntries.$inferSelect;
+export type IdeaWithEntryCount = Idea & { entryCount: number };
+
+type IdeaMeta = { addedBy?: number; addedByName?: string; createdAt?: Date };
+
+function normalizeIdeaMeta(opts?: IdeaMeta) {
+  return {
+    addedBy: opts?.addedBy ?? null,
+    addedByName: opts?.addedByName ?? null,
+    ...(opts?.createdAt ? { createdAt: opts.createdAt } : {}),
+  };
+}
 
 export function insertIdea(
   db: Db,
   text: string,
-  opts?: { addedBy?: number; addedByName?: string; createdAt?: Date },
-): void {
-  db.insert(ideas).values({
+  opts?: IdeaMeta,
+): Idea {
+  return db.insert(ideas).values({
     text,
-    addedBy: opts?.addedBy ?? null,
-    addedByName: opts?.addedByName ?? null,
-    ...(opts?.createdAt ? { createdAt: opts.createdAt } : {}),
-  }).run();
+    ...normalizeIdeaMeta(opts),
+  }).returning().get();
 }
 
-/**
- * Returns up to `limit` ideas, oldest first (so output reads chronologically).
- * Implementation grabs the latest `limit` by createdAt, then reverses, to keep
- * a stable cap on result size regardless of total backlog.
- */
-export function getRecentIdeas(db: Db, limit = 20) {
+export function appendIdeaEntry(
+  db: Db,
+  ideaId: number,
+  text: string,
+  opts?: IdeaMeta,
+): IdeaEntry | undefined {
+  const idea = getIdeaById(db, ideaId);
+  if (!idea) return undefined;
+
+  return db.insert(ideaEntries).values({
+    ideaId,
+    text,
+    ...normalizeIdeaMeta(opts),
+  }).returning().get();
+}
+
+export function getIdeaById(db: Db, ideaId: number): Idea | undefined {
+  return db.select().from(ideas).where(eq(ideas.id, ideaId)).get();
+}
+
+export function getIdeaEntries(db: Db, ideaId: number): IdeaEntry[] {
   return db
+    .select()
+    .from(ideaEntries)
+    .where(eq(ideaEntries.ideaId, ideaId))
+    .orderBy(ideaEntries.createdAt)
+    .all();
+}
+
+export function getIdeaThread(db: Db, ideaId: number) {
+  const idea = getIdeaById(db, ideaId);
+  if (!idea) return undefined;
+  return {
+    idea,
+    entries: getIdeaEntries(db, ideaId),
+  };
+}
+
+export function getRecentIdeas(db: Db, limit = 20) {
+  const items = db
     .select()
     .from(ideas)
     .orderBy(desc(ideas.createdAt))
     .limit(limit)
     .all()
     .reverse();
+
+  const counts = db
+    .select({
+      ideaId: ideaEntries.ideaId,
+      count: ideaEntries.id,
+    })
+    .from(ideaEntries)
+    .all()
+    .reduce<Map<number, number>>((map, row) => {
+      map.set(row.ideaId, (map.get(row.ideaId) ?? 0) + 1);
+      return map;
+    }, new Map());
+
+  return items.map(item => ({
+    ...item,
+    entryCount: counts.get(item.id) ?? 0,
+  })) satisfies IdeaWithEntryCount[];
 }
 
 export function deleteIdea(db: Db, ideaId: number): boolean {
+  db.delete(ideaEntries).where(eq(ideaEntries.ideaId, ideaId)).run();
   const result = db.delete(ideas).where(eq(ideas.id, ideaId)).run();
   return result.changes > 0;
 }
 
 export function clearIdeas(db: Db): number {
+  db.delete(ideaEntries).run();
   const result = db.delete(ideas).run();
   return result.changes;
 }
