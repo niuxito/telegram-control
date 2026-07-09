@@ -17,6 +17,35 @@ function unwrapUrlsFromCode(text: string): string {
   return text.replace(/`(https?:\/\/[^\s`]+)`/g, '$1');
 }
 
+/** True for Telegram/HTTP errors that are worth retrying (gateway timeouts, rate limits, network glitches). */
+function isTransientTelegramError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { error_code?: number; code?: string; name?: string; cause?: { code?: string } };
+  if (e.error_code && [429, 500, 502, 503, 504].includes(e.error_code)) return true;
+  const code = e.code ?? e.cause?.code;
+  if (code && ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN', 'ENETUNREACH', 'ENOTFOUND'].includes(code)) return true;
+  if (e.name === 'HttpError') return true;
+  return false;
+}
+
+/** Retries a Telegram API call on transient errors with exponential backoff (max ~30s total). */
+async function withTelegramRetry<T>(label: string, fn: () => Promise<T>, maxAttempts = 5): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isTransientTelegramError(err) || attempt === maxAttempts) throw err;
+      const delay = Math.min(1500 * attempt, 8000);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[ClaudeSession] ${label} transient error (attempt ${attempt}/${maxAttempts}, retry in ${delay}ms): ${msg}`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
 export class ClaudeSession {
   private db: Db;
   private bot: Bot;
@@ -60,7 +89,11 @@ export class ClaudeSession {
       prompt,
       status: 'pending',
     });
-    this.processQueue();
+    // Fire-and-forget: any rejection that escaped runTask's own try/catch is
+    // logged here so it never surfaces as an unhandledRejection.
+    this.processQueue().catch((err) => {
+      console.error(`[ClaudeSession ${this.projectName}] processQueue rejected unexpectedly:`, err);
+    });
     return task.id;
   }
 
@@ -74,7 +107,23 @@ export class ClaudeSession {
         if (pending.length === 0) break;
 
         const task = pending[0];
-        await this.runTask(task.id, task.prompt);
+        try {
+          await this.runTask(task.id, task.prompt);
+        } catch (err) {
+          // runTask has its own catch, but defend against anything that slips through
+          // (e.g. an error thrown before the inner try, or by the catch handler itself)
+          // so a single failure does not abandon the rest of the queue.
+          console.error(`[ClaudeSession ${this.projectName}] runTask escaped for task ${task.id}:`, err);
+          try {
+            updateTask(this.db, task.id, {
+              status: 'failed',
+              result: err instanceof Error ? err.message : String(err),
+              completedAt: new Date(),
+            });
+          } catch (dbErr) {
+            console.error(`[ClaudeSession ${this.projectName}] also failed to mark task ${task.id} as failed:`, dbErr);
+          }
+        }
       }
     } finally {
       this.processing = false;
@@ -88,12 +137,23 @@ export class ClaudeSession {
 
     const session = getLatestSession(this.db, this.projectId);
 
-    // Send initial "working" message
-    const workingMsg = await this.bot.api.sendMessage(
-      this.chatId,
-      '⏳ Working...',
-      { message_thread_id: this.topicId }
-    );
+    // Send initial "working" message — retry transient 5xx/network errors so a
+    // single Telegram blip cannot tear down the queue processor.
+    let workingMsg: Awaited<ReturnType<typeof this.bot.api.sendMessage>>;
+    try {
+      workingMsg = await withTelegramRetry('sendMessage(working)', () =>
+        this.bot.api.sendMessage(this.chatId, '⏳ Working...', { message_thread_id: this.topicId })
+      );
+    } catch (err) {
+      console.error(`[ClaudeSession] Could not send initial working message for task ${taskId}:`, err);
+      updateTask(this.db, taskId, {
+        status: 'failed',
+        result: `Telegram error sending initial message: ${err instanceof Error ? err.message : String(err)}`,
+        completedAt: new Date(),
+      });
+      agentEvents.emit('agent', { type: 'task:failed', agentId: this.projectId, agentName: this.projectName, taskId });
+      return;
+    }
 
     updateTask(this.db, taskId, { liveMessageId: workingMsg.message_id });
 

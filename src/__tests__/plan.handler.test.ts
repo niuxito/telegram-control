@@ -85,8 +85,10 @@ function makeCtx(opts: { threadId?: number; match?: string; userId?: number } = 
 }
 
 describe('PLANNING_MODEL constant', () => {
-  it('points to a Claude Opus model', () => {
-    expect(PLANNING_MODEL).toMatch(/^claude-opus-/);
+  it('uses the "opus" alias so it always tracks the latest Claude Opus', () => {
+    // Either the bare alias 'opus' or a pinned full ID like 'claude-opus-4-7'
+    // is acceptable — both resolve to an Opus model in the Claude CLI.
+    expect(PLANNING_MODEL).toMatch(/^(opus|claude-opus-)/);
   });
 });
 

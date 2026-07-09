@@ -20,6 +20,17 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Last-line-of-defense safety net. Every known error path is caught locally;
+// these handlers exist so a single transient failure (Telegram 5xx, network
+// blip, etc.) does not kill the long-running bot process. Registered at module
+// load so they cover startup errors too.
+process.on('uncaughtException', (err) => {
+  console.error('[Process] uncaughtException — bot stays up:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process] unhandledRejection — bot stays up:', reason);
+});
+
 async function main() {
   // 0. Run setup wizard (skipped automatically after first successful run)
   const shouldStart = await runWizard();
@@ -52,7 +63,8 @@ async function main() {
         wake_word TEXT,
         model TEXT,
         qa_enabled INTEGER NOT NULL DEFAULT 1,
-        budget_usd REAL
+        budget_usd REAL,
+        default_agent TEXT NOT NULL DEFAULT 'claude'
       );
 
       CREATE TABLE IF NOT EXISTS claude_sessions (
@@ -140,6 +152,7 @@ async function main() {
   try { sqlite.exec(`ALTER TABLE projects ADD COLUMN model TEXT`); } catch { /* already exists */ }
   try { sqlite.exec(`ALTER TABLE projects ADD COLUMN qa_enabled INTEGER NOT NULL DEFAULT 1`); } catch { /* already exists */ }
   try { sqlite.exec(`ALTER TABLE projects ADD COLUMN budget_usd REAL`); } catch { /* already exists */ }
+  try { sqlite.exec(`ALTER TABLE projects ADD COLUMN default_agent TEXT NOT NULL DEFAULT 'claude'`); } catch { /* already exists */ }
   try { sqlite.exec(`CREATE TABLE IF NOT EXISTS project_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), text TEXT NOT NULL, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
   try { sqlite.exec(`CREATE TABLE IF NOT EXISTS topic_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), sender TEXT NOT NULL, sender_name TEXT, text TEXT NOT NULL, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
   try { sqlite.exec(`CREATE TABLE IF NOT EXISTS ideas (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, added_by INTEGER, added_by_name TEXT, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }

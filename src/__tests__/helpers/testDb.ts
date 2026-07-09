@@ -26,7 +26,8 @@ export function createTestDb() {
       wake_word TEXT,
       model TEXT,
       qa_enabled INTEGER NOT NULL DEFAULT 1,
-      budget_usd REAL
+      budget_usd REAL,
+      default_agent TEXT NOT NULL DEFAULT 'claude'
     );
 
     CREATE TABLE IF NOT EXISTS claude_sessions (

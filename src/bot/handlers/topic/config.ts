@@ -162,10 +162,15 @@ export function setupConfigHandlers(bot: any, projectManager: ProjectManager, db
     const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
     if (!project) return;
 
+    // We list Claude CLI aliases instead of versioned IDs so the list never
+    // goes stale — `claude --model opus` always picks the latest Opus, etc.
+    // Power users can still pin a specific version by passing the full ID
+    // (e.g. `claude-opus-4-7`); see the passthrough branch below.
     const AVAILABLE_MODELS = [
-      { id: 'claude-opus-4-6',           label: 'Claude Opus 4.6    — most capable' },
-      { id: 'claude-sonnet-4-6',         label: 'Claude Sonnet 4.6  — balanced (CLI default)' },
-      { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5   — fastest, cheapest' },
+      { id: 'opus',   label: 'Claude Opus   — most capable (latest)' },
+      { id: 'sonnet', label: 'Claude Sonnet — balanced (CLI default)' },
+      { id: 'haiku',  label: 'Claude Haiku  — fastest, cheapest' },
+      { id: 'fable',  label: 'Claude Fable  — long-context, creative' },
     ];
 
     const arg = (ctx.match as string).trim();
@@ -175,13 +180,14 @@ export function setupConfigHandlers(bot: any, projectManager: ProjectManager, db
       const current = session?.getModel() ?? project.model ?? null;
       const currentLabel = current
         ? (AVAILABLE_MODELS.find(m => m.id === current)?.label ?? current)
-        : 'CLI default (Sonnet 4.6)';
+        : 'CLI default (sonnet)';
       const list = AVAILABLE_MODELS
         .map(m => `  ${m.id === current ? '✅' : '◻️'} ${m.label}`)
         .join('\n');
       await ctx.reply(
         `🤖 Model for ${project.name}:\nCurrent: ${currentLabel}\n\nAvailable:\n${list}\n\n` +
-        `Use /model <name> to change, /model reset to use CLI default.`
+        `Use /model <alias> to change, /model reset to use CLI default.\n` +
+        `Power users: /model claude-opus-4-7 (or any full ID) is also accepted.`
       );
       return;
     }
@@ -189,22 +195,32 @@ export function setupConfigHandlers(bot: any, projectManager: ProjectManager, db
     if (arg === 'reset') {
       await updateProject(db, project.id, { model: null });
       projectManager.getSession(project.id)?.setModel(null);
-      await ctx.reply('✅ Model reset to CLI default (Sonnet 4.6).');
+      await ctx.reply('✅ Model reset to CLI default (sonnet).');
       return;
     }
 
-    const match = AVAILABLE_MODELS.find(m => m.id === arg || m.id.startsWith(arg));
-    if (!match) {
+    // Resolve: known alias > alias prefix > full Anthropic model ID > reject.
+    let resolved: string | null = null;
+    const aliasMatch = AVAILABLE_MODELS.find(m => m.id === arg || m.id.startsWith(arg));
+    if (aliasMatch) {
+      resolved = aliasMatch.id;
+    } else if (/^claude-[a-z0-9-]+$/i.test(arg)) {
+      // Passthrough for pinning a specific version (e.g. claude-opus-4-7).
+      resolved = arg;
+    }
+
+    if (!resolved) {
       await ctx.reply(
-        `❌ Unknown model: ${arg}\n\nAvailable:\n` +
-        AVAILABLE_MODELS.map(m => `  ${m.id}`).join('\n')
+        `❌ Unknown model: ${arg}\n\nAvailable aliases:\n` +
+        AVAILABLE_MODELS.map(m => `  ${m.id}`).join('\n') +
+        `\n\nOr pass a full model ID like claude-opus-4-7.`
       );
       return;
     }
 
-    await updateProject(db, project.id, { model: match.id });
-    projectManager.getSession(project.id)?.setModel(match.id);
-    await ctx.reply(`✅ Model set to ${match.id} for ${project.name}.`);
+    await updateProject(db, project.id, { model: resolved });
+    projectManager.getSession(project.id)?.setModel(resolved);
+    await ctx.reply(`✅ Model set to ${resolved} for ${project.name}.`);
   });
 
   bot.command('context', async (ctx: Context) => {
@@ -359,6 +375,49 @@ export function setupConfigHandlers(bot: any, projectManager: ProjectManager, db
 
     insertNote(db, project.id, arg);
     await ctx.reply('📝 Note saved.');
+  });
+
+  // /setdefault          — show current default agent
+  // /setdefault claude   — set Claude (CLI) as default (original behaviour)
+  // /setdefault codex    — set Codex as default
+  // /setdefault opencode — set OpenCode as default
+  bot.command('setdefault', async (ctx: Context) => {
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const AGENTS = ['claude', 'codex', 'opencode'] as const;
+    type AgentName = typeof AGENTS[number];
+    const AGENT_LABELS: Record<AgentName, string> = {
+      claude:    '🤖 Claude (CLI)',
+      codex:     '🧠 Codex',
+      opencode:  '🦊 OpenCode',
+    };
+
+    const arg = (ctx.match as string).trim().toLowerCase() as AgentName | '';
+
+    if (!arg) {
+      const current = (project.defaultAgent ?? 'claude') as AgentName;
+      const list = AGENTS
+        .map(a => `  ${a === current ? '✅' : '◻️'} ${AGENT_LABELS[a]}  (/setdefault ${a})`)
+        .join('\n');
+      await ctx.reply(
+        `🤖 Default agent for *${project.name}*\n\n` +
+        `Current: ${AGENT_LABELS[current]}\n\n` +
+        `Available:\n${list}`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    if (!AGENTS.includes(arg as AgentName)) {
+      await ctx.reply(
+        `❌ Unknown agent: ${arg}\n\nValid options: ${AGENTS.join(', ')}`
+      );
+      return;
+    }
+
+    await updateProject(db, project.id, { defaultAgent: arg });
+    await ctx.reply(`✅ Default agent set to ${AGENT_LABELS[arg as AgentName]} for *${project.name}*.\n\nFree-text messages will now go to ${AGENT_LABELS[arg as AgentName]} by default.`, { parse_mode: 'Markdown' });
   });
 
   bot.command('secret', async (ctx: Context) => {

@@ -15,6 +15,7 @@ export const projects = sqliteTable('projects', {
   model: text('model'),
   qaEnabled: integer('qa_enabled', { mode: 'boolean' }).notNull().default(true),
   budgetUsd: real('budget_usd'),
+  defaultAgent: text('default_agent', { enum: ['claude', 'codex', 'opencode'] }).notNull().default('claude'),
 });
 
 export const claudeSessions = sqliteTable('claude_sessions', {

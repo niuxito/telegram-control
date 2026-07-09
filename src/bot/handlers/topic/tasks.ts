@@ -14,9 +14,10 @@ const TEST_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT_CHARS = 3800;
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 
-// Model used by /plan — pinned to the most-capable Claude available.
+// Model used by /plan — Claude CLI's "opus" alias always points at the most
+// capable Opus release, so we don't have to bump this when new versions ship.
 // Per-call override; does NOT change the project's persistent /model setting.
-export const PLANNING_MODEL = 'claude-opus-4-7';
+export const PLANNING_MODEL = 'opus';
 
 function buildTopicPrompt(
   db: Db,
@@ -312,60 +313,69 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
       } catch { /* ignore edit races */ }
     }, 5000);
 
+    let codexResult: Awaited<ReturnType<typeof runWithRouter>> | undefined;
+    let codexErr: any;
     try {
-      const { result, agentUsed, fellBack } = await runWithRouter({
+      codexResult = await runWithRouter({
         prompt: contextualPrompt,
         cwd: project.localPath,
         preferredAgent: 'codex',
         sensitivity: 'project-internal',
       });
+    } catch (err: any) {
+      codexErr = err;
+    } finally {
       clearInterval(heartbeat);
+    }
 
-      // Codex auth expired → actionable message, no spawn of exec wasted
-      if (!result.success && result.errorType === 'auth_required') {
-        await publishTopicMessage(ctx, chatId, project.topicId!, msgId,
-          '🔑 La sesión de Codex con OpenAI ha expirado.\n\n' +
-          'Usa /codex-login para re-autenticar desde el móvil (te doy un ' +
-          'enlace y un código). Mientras tanto puedes seguir con /task ' +
-          '(Claude) o /opencode.'
-        );
+    if (codexErr) {
+      await publishTopicMessage(ctx, chatId, project.topicId!, msgId, `❌ Codex error: ${codexErr.message}`);
+      return;
+    }
+
+    const { result, agentUsed, fellBack } = codexResult!;
+
+    // Codex auth expired → actionable message, no spawn of exec wasted
+    if (!result.success && result.errorType === 'auth_required') {
+      await publishTopicMessage(ctx, chatId, project.topicId!, msgId,
+        '🔑 La sesión de Codex con OpenAI ha expirado.\n\n' +
+        'Usa /codex-login para re-autenticar desde el móvil (te doy un ' +
+        'enlace y un código). Mientras tanto puedes seguir con /task ' +
+        '(Claude) o /opencode.'
+      );
+      return;
+    }
+
+    // Project-internal + usage_limit → offer opt-in fallback (privacy gate)
+    if (!result.success && result.errorType === 'usage_limit') {
+      const userId = ctx.from?.id;
+      if (userId) {
+        const { text, keyboard } = buildQuotaRetryPrompt(userId, 'Codex');
+        await publishTopicMessage(ctx, chatId, project.topicId!, msgId, text, { reply_markup: keyboard });
+        setPendingQuotaRetry(userId, {
+          prompt: contextualPrompt,
+          cwd: project.localPath,
+          originalAgent: 'codex',
+          projectId: project.id,
+          chatId, topicId: project.topicId!, messageId: msgId,
+        });
         return;
       }
-
-      // Project-internal + usage_limit → offer opt-in fallback (privacy gate)
-      if (!result.success && result.errorType === 'usage_limit') {
-        const userId = ctx.from?.id;
-        if (userId) {
-          const { text, keyboard } = buildQuotaRetryPrompt(userId, 'Codex');
-          await publishTopicMessage(ctx, chatId, project.topicId!, msgId, text, { reply_markup: keyboard });
-          setPendingQuotaRetry(userId, {
-            prompt: contextualPrompt,
-            cwd: project.localPath,
-            originalAgent: 'codex',
-            projectId: project.id,
-            chatId, topicId: project.topicId!, messageId: msgId,
-          });
-          return;
-        }
-      }
-
-      const body = result.result?.trim() || result.error || '(no output)';
-      const header = result.success ? '' : '⚠️ Codex finished with errors\n\n';
-      const agentLabel = getAgent(agentUsed).label;
-      const degradedNote = fellBack ? ` (auto-degraded from Codex after quota)` : '';
-      const footer = `\n\n— ${getAgent(agentUsed).icon} Powered by ${agentLabel}${degradedNote}`;
-      const full = header + body + footer;
-
-      // Save response to shared history under the agent that actually answered
-      if (result.result?.trim()) {
-        insertTopicMessage(db, { projectId: project.id, sender: agentUsed, text: result.result.trim() });
-      }
-
-      await publishTopicMessage(ctx, chatId, project.topicId!, msgId, full);
-    } catch (err: any) {
-      clearInterval(heartbeat);
-      await publishTopicMessage(ctx, chatId, project.topicId!, msgId, `❌ Codex error: ${err.message}`);
     }
+
+    const body = result.result?.trim() || result.error || '(no output)';
+    const header = result.success ? '' : '⚠️ Codex finished with errors\n\n';
+    const agentLabel = getAgent(agentUsed).label;
+    const degradedNote = fellBack ? ` (auto-degraded from Codex after quota)` : '';
+    const footer = `\n\n— ${getAgent(agentUsed).icon} Powered by ${agentLabel}${degradedNote}`;
+    const full = header + body + footer;
+
+    // Save response to shared history under the agent that actually answered
+    if (result.result?.trim()) {
+      insertTopicMessage(db, { projectId: project.id, sender: agentUsed, text: result.result.trim() });
+    }
+
+    await publishTopicMessage(ctx, chatId, project.topicId!, msgId, full);
   });
 
   // /opencode <prompt> — runs the task with OpenCode, the third AI agent.
@@ -397,7 +407,13 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     const contextualPrompt = context ? `${context}Current request: ${finalUserPrompt}` : finalUserPrompt;
 
     if (flagFound) {
-      await ctx.api.editMessageText(chatId, msgId, `🦊 OpenCode is working (extended context: ${history.length} messages)...`);
+      await publishTopicMessage(
+        ctx,
+        chatId,
+        project.topicId!,
+        msgId,
+        `🦊 OpenCode is working (extended context: ${history.length} messages)...`,
+      );
     }
 
     let dots = 0;
@@ -408,36 +424,40 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
       } catch { /* ignore edit races */ }
     }, 5000);
 
+    let opencodeResult: Awaited<ReturnType<typeof runWithRouter>> | undefined;
+    let opencodeErr: any;
     try {
-      const { result, agentUsed, fellBack } = await runWithRouter({
+      opencodeResult = await runWithRouter({
         prompt: contextualPrompt,
         cwd: project.localPath,
         preferredAgent: 'opencode',
         sensitivity: 'project-internal',
       });
-      clearInterval(heartbeat);
-
-      const body = result.result?.trim() || result.error || '(no output)';
-      const header = result.success ? '' : '⚠️ OpenCode finished with errors\n\n';
-      const cost = result.costUsd ? `💰 $${result.costUsd.toFixed(4)} | ` : '';
-      const agentLabel = getAgent(agentUsed).label;
-      const degradedNote = fellBack ? ` (auto-degraded from OpenCode after quota)` : '';
-      const footer = `\n\n---\n${cost}${getAgent(agentUsed).icon} Powered by ${agentLabel}${degradedNote}`;
-      const full = header + body + footer;
-
-      if (result.result?.trim()) {
-        insertTopicMessage(db, { projectId: project.id, sender: agentUsed, text: result.result.trim() });
-      }
-
-      if (full.length > 4096) {
-        await ctx.api.editMessageText(chatId, msgId, full.slice(0, 4093) + '…');
-      } else {
-        await ctx.api.editMessageText(chatId, msgId, full);
-      }
     } catch (err: any) {
+      opencodeErr = err;
+    } finally {
       clearInterval(heartbeat);
-      await ctx.api.editMessageText(chatId, msgId, `❌ OpenCode error: ${err.message}`);
     }
+
+    if (opencodeErr) {
+      await publishTopicMessage(ctx, chatId, project.topicId!, msgId, `❌ OpenCode error: ${opencodeErr.message}`);
+      return;
+    }
+
+    const { result: ocResult, agentUsed: ocAgent, fellBack: ocFellBack } = opencodeResult!;
+    const body = ocResult.result?.trim() || ocResult.error || '(no output)';
+    const header = ocResult.success ? '' : '⚠️ OpenCode finished with errors\n\n';
+    const cost = ocResult.costUsd ? `💰 $${ocResult.costUsd.toFixed(4)} | ` : '';
+    const agentLabel = getAgent(ocAgent).label;
+    const degradedNote = ocFellBack ? ` (auto-degraded from OpenCode after quota)` : '';
+    const footer = `\n\n---\n${cost}${getAgent(ocAgent).icon} Powered by ${agentLabel}${degradedNote}`;
+    const full = header + body + footer;
+
+    if (ocResult.result?.trim()) {
+      insertTopicMessage(db, { projectId: project.id, sender: ocAgent, text: ocResult.result.trim() });
+    }
+
+    await publishTopicMessage(ctx, chatId, project.topicId!, msgId, full);
   });
 
   // /plan <prompt> — runs Claude with the most-capable model (Opus) for one
@@ -473,7 +493,13 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     const contextualPrompt = context ? `${context}Current request: ${finalUserPrompt}` : finalUserPrompt;
 
     if (flagFound) {
-      await ctx.api.editMessageText(chatId, msgId, `🧠 Planning with ${PLANNING_MODEL} (extended context: ${history.length} messages)...`);
+      await publishTopicMessage(
+        ctx,
+        chatId,
+        project.topicId!,
+        msgId,
+        `🧠 Planning with ${PLANNING_MODEL} (extended context: ${history.length} messages)...`,
+      );
     }
 
     let dots = 0;
@@ -484,54 +510,59 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
       } catch { /* ignore edit races */ }
     }, 5000);
 
+    let planResult: Awaited<ReturnType<typeof runWithRouter>> | undefined;
+    let planErr: any;
     try {
-      const { result, agentUsed } = await runWithRouter({
+      planResult = await runWithRouter({
         prompt: contextualPrompt,
         cwd: project.localPath,
         model: PLANNING_MODEL,
         preferredAgent: 'claude',
         sensitivity: 'project-internal',
       });
-      clearInterval(heartbeat);
-
-      if (!result.success && result.errorType === 'usage_limit') {
-        const userId = ctx.from?.id;
-        if (userId) {
-          const { text, keyboard } = buildQuotaRetryPrompt(userId, `Claude (${PLANNING_MODEL})`);
-          await ctx.api.editMessageText(chatId, msgId, text, { reply_markup: keyboard });
-          setPendingQuotaRetry(userId, {
-            prompt: contextualPrompt,
-            cwd: project.localPath,
-            originalAgent: 'claude',
-            projectId: project.id,
-            chatId, topicId: project.topicId!, messageId: msgId,
-          });
-          return;
-        }
-      }
-
-      const body = result.result?.trim() || result.error || '(no output)';
-      const header = result.success ? '' : '⚠️ Planning finished with errors\n\n';
-      const cost = result.costUsd ? `💰 $${result.costUsd.toFixed(4)} | ` : '';
-      const lane = agentUsed === 'claude'
-        ? `Claude (${PLANNING_MODEL}, planning lane)`
-        : `${getAgent(agentUsed).label} (auto-degraded from Claude after quota)`;
-      const footer = `\n\n---\n${cost}🧠 Powered by ${lane}`;
-      const full = header + body + footer;
-
-      if (result.result?.trim()) {
-        insertTopicMessage(db, { projectId: project.id, sender: agentUsed, text: result.result.trim() });
-      }
-
-      if (full.length > 4096) {
-        await ctx.api.editMessageText(chatId, msgId, full.slice(0, 4093) + '…');
-      } else {
-        await ctx.api.editMessageText(chatId, msgId, full);
-      }
     } catch (err: any) {
+      planErr = err;
+    } finally {
       clearInterval(heartbeat);
-      await ctx.api.editMessageText(chatId, msgId, `❌ Planning error: ${err.message}`);
     }
+
+    if (planErr) {
+      await publishTopicMessage(ctx, chatId, project.topicId!, msgId, `❌ Planning error: ${planErr.message}`);
+      return;
+    }
+
+    const { result: planRes, agentUsed: planAgent } = planResult!;
+
+    if (!planRes.success && planRes.errorType === 'usage_limit') {
+      const userId = ctx.from?.id;
+      if (userId) {
+        const { text, keyboard } = buildQuotaRetryPrompt(userId, `Claude (${PLANNING_MODEL})`);
+        await publishTopicMessage(ctx, chatId, project.topicId!, msgId, text, { reply_markup: keyboard });
+        setPendingQuotaRetry(userId, {
+          prompt: contextualPrompt,
+          cwd: project.localPath,
+          originalAgent: 'claude',
+          projectId: project.id,
+          chatId, topicId: project.topicId!, messageId: msgId,
+        });
+        return;
+      }
+    }
+
+    const planBody = planRes.result?.trim() || planRes.error || '(no output)';
+    const planHeader = planRes.success ? '' : '⚠️ Planning finished with errors\n\n';
+    const planCost = planRes.costUsd ? `💰 $${planRes.costUsd.toFixed(4)} | ` : '';
+    const lane = planAgent === 'claude'
+      ? `Claude (${PLANNING_MODEL}, planning lane)`
+      : `${getAgent(planAgent).label} (auto-degraded from Claude after quota)`;
+    const planFooter = `\n\n---\n${planCost}🧠 Powered by ${lane}`;
+    const planFull = planHeader + planBody + planFooter;
+
+    if (planRes.result?.trim()) {
+      insertTopicMessage(db, { projectId: project.id, sender: planAgent, text: planRes.result.trim() });
+    }
+
+    await publishTopicMessage(ctx, chatId, project.topicId!, msgId, planFull);
   });
 
   // /review         — review current git diff
