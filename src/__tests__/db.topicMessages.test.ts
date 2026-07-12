@@ -187,15 +187,25 @@ describe('topicMessages — buildConversationContext', () => {
     expect(buildConversationContext([])).toBe('');
   });
 
-  it('builds a header + messages block when messages exist', () => {
+  it('builds a compact header + messages block when messages exist', () => {
     const ctx = buildConversationContext([
       { sender: 'user', senderName: 'niux', text: 'hello', createdAt: new Date() },
       { sender: 'claude', senderName: null, text: 'hi back', createdAt: new Date() },
     ]);
-    expect(ctx).toContain('CONVERSATION HISTORY (2 messages)');
+    expect(ctx).toContain('Chat log — 2 msgs');
     expect(ctx).toContain('[niux] hello');
     expect(ctx).toContain('[Claude] hi back');
-    expect(ctx).toMatch(/==========\n[\s\S]+==========/);
+    // Delimiter is the shorter '---' separator on its own line
+    expect(ctx).toMatch(/---\n[\s\S]+---/);
+  });
+
+  it('keeps the banner under 80 chars to save tokens', () => {
+    // The whole raison d'être of the banner shrink: no more ~450-char preamble.
+    const ctx = buildConversationContext([
+      { sender: 'user', senderName: 'niux', text: 'x', createdAt: new Date() },
+    ]);
+    const firstLine = ctx.split('\n')[0];
+    expect(firstLine.length).toBeLessThanOrEqual(80);
   });
 
   it('uses "User" as fallback name when senderName is null on a user message', () => {
@@ -281,13 +291,6 @@ describe('topicMessages — buildConversationContext', () => {
     expect(ctx).not.toContain('MARK0');
     // The truncation banner is added
     expect(ctx).toContain('earlier messages omitted');
-  });
-
-  it('warns the agent not to query DB for history', () => {
-    const ctx = buildConversationContext([
-      { sender: 'user', senderName: 'niux', text: 'hi', createdAt: new Date() },
-    ]);
-    expect(ctx).toContain('Do NOT query the database');
   });
 
   it('hints about --more flag for older history', () => {

@@ -378,6 +378,23 @@ export class ClaudeSession {
         }
       }
 
+      // Auto-checkpoint: when the Claude CLI session grows past the thresholds,
+      // summarize it into CLAUDE.md and reset. Without this, `--resume` keeps
+      // re-billing the whole conversation as input tokens forever.
+      // Runs in the background so it doesn't delay the reply the user just got.
+      const AUTO_CHECKPOINT_MESSAGES = 30;
+      const AUTO_CHECKPOINT_COST = 0.50;
+      const latest = getLatestSession(this.db, this.projectId);
+      if (result.success && latest && (
+        (latest.messageCount ?? 0) >= AUTO_CHECKPOINT_MESSAGES ||
+        (latest.totalCostUsd ?? 0) >= AUTO_CHECKPOINT_COST
+      )) {
+        console.log(`[ClaudeSession ${this.projectName}] Auto-checkpoint triggered: messages=${latest.messageCount}, cost=$${latest.totalCostUsd?.toFixed(4)}`);
+        this.autoCheckpoint(latest.messageCount ?? 0, latest.totalCostUsd ?? 0).catch(err => {
+          console.warn(`[ClaudeSession ${this.projectName}] Auto-checkpoint failed:`, err instanceof Error ? err.message : err);
+        });
+      }
+
       updateTask(this.db, taskId, {
         status: result.success ? 'completed' : 'failed',
         result: result.result,
@@ -495,6 +512,34 @@ export class ClaudeSession {
     const pending = getPendingTasks(this.db, this.projectId);
     const session = getLatestSession(this.db, this.projectId);
     return { running, pendingCount: pending.length, session };
+  }
+
+  /**
+   * Runs a checkpoint automatically in the background, notifying the topic
+   * before and after. Uses `checkpoint()` under the hood; adds a "why" hint
+   * (which threshold fired) and swallows failures so a broken checkpoint
+   * never breaks the task loop.
+   */
+  private async autoCheckpoint(messageCount: number, totalCostUsd: number): Promise<void> {
+    const reason = messageCount >= 30
+      ? `${messageCount} messages`
+      : `$${totalCostUsd.toFixed(4)} spent`;
+    try {
+      await this.bot.api.sendMessage(
+        this.chatId,
+        `🔖 Auto-checkpoint triggered (${reason}). Summarising and resetting the Claude session...`,
+        { message_thread_id: this.topicId }
+      );
+    } catch { /* non-fatal */ }
+
+    const { summary, appended } = await this.checkpoint();
+    const done = appended
+      ? `✅ Auto-checkpoint saved to CLAUDE.md. Fresh Claude session for the next task.`
+      : `⚠️ Auto-checkpoint could not build a summary. Session reset anyway.`;
+    try {
+      await this.bot.api.sendMessage(this.chatId, done, { message_thread_id: this.topicId });
+    } catch { /* non-fatal */ }
+    void summary;
   }
 
   /**

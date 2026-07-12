@@ -144,16 +144,13 @@ export function buildConversationContext(
     kept.unshift('… (earlier messages omitted to stay within context limit)');
   }
 
+  // Compact banner — the long explanation used to burn ~100 tokens per call
+  // for something the agent didn't actually need. Keep only the essentials:
+  // (a) what this block is, (b) the older-messages escape hatch.
   return (
-    `=== CONVERSATION HISTORY (${kept.length} messages) ===\n` +
-    `This is the shared chat log between the user and the AI agents (Claude, Codex, OpenCode).\n` +
-    `Each message is prefixed by the speaker's label. Use this to keep continuity across turns.\n` +
-    `IMPORTANT: This history is complete and authoritative. Do NOT query the database or use shell commands\n` +
-    `to look up conversation history — everything you need is already provided here.\n` +
-    `If you need older messages not shown here, tell the user to add --more to their request.\n` +
-    `==========\n` +
+    `Chat log — ${kept.length} msgs. Older? Ask user to re-send with --more.\n---\n` +
     kept.join('\n') +
-    `\n==========\n\n`
+    `\n---\n\n`
   );
 }
 

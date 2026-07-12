@@ -81,13 +81,12 @@ export function setupTopicTextFallback(bot: any, projectManager: ProjectManager,
     if (defaultAgent === 'claude') {
       insertTopicMessage(db, { projectId: project.id, sender: 'user', senderName, text: promptClean });
 
-      const history = getRecentTopicMessages(db, project.id, limit);
-      const context = buildConversationContext(history.slice(0, -1));
-      const finalPrompt = context
-        ? `${context}Current request: ${resolveAgentPrompt(promptClean)}`
-        : resolveAgentPrompt(promptClean);
+      // Claude CLI carries its own conversation history via `--resume <sessionId>`
+      // (see ClaudeSession.runTask → runCliTask). Prepending our own topic_messages
+      // history here would ship it twice and burn ~1500 tokens/turn for nothing.
+      // Codex/OpenCode are ephemeral, so they still get the injected context below.
+      await session.queueTask(resolveAgentPrompt(promptClean));
 
-      await session.queueTask(finalPrompt);
       const pending = getPendingTasks(db, project.id);
       if (pending.length > 1) {
         await ctx.reply(`✅ Task queued (position ${pending.length}). Current task will finish first.`);
