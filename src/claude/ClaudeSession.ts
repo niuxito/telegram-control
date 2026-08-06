@@ -5,7 +5,7 @@ import { insertTask, updateTask, getRunningTask, getRunningTasksByProject, getPe
 import { getProjectById } from '../db/queries/projects.js';
 import { runCliTask } from './CliStrategy.js';
 import { runCodexTask } from './CodexStrategy.js';
-import { CHECKPOINT_PROMPT, formatCheckpointBlock, composeCheckpointAppend } from './checkpointFormat.js';
+import { CHECKPOINT_PROMPT, formatCheckpointBlock, composeCheckpointRotate } from './checkpointFormat.js';
 import { formatLimitError } from '../notifications/formatters.js';
 import { agentEvents } from '../api/events.js';
 import { InlineKeyboard } from 'grammy';
@@ -131,6 +131,35 @@ export class ClaudeSession {
   }
 
   private async runTask(taskId: number, prompt: string) {
+    // Circuit breaker: once a project has crossed its budget limit, refuse to
+    // run further tasks (no CLI invocation, no cost) until the user raises or
+    // removes the limit. Trips before "running" so a backlog of queued tasks
+    // can't keep burning money past the cap.
+    const breakerProject = getProjectById(this.db, this.projectId);
+    if (breakerProject && breakerProject.budgetUsd != null) {
+      const breakerSession = getLatestSession(this.db, this.projectId);
+      const totalSpent = breakerSession ? breakerSession.totalCostUsd : 0;
+      if (totalSpent >= breakerProject.budgetUsd) {
+        console.warn(`[ClaudeSession ${this.projectName}] Circuit breaker tripped: $${totalSpent.toFixed(4)} >= $${breakerProject.budgetUsd.toFixed(2)} — refusing task ${taskId}`);
+        updateTask(this.db, taskId, {
+          status: 'failed',
+          result: `Circuit breaker: budget exceeded ($${totalSpent.toFixed(4)} / $${breakerProject.budgetUsd.toFixed(2)}). Task not run.`,
+          completedAt: new Date(),
+        });
+        agentEvents.emit('agent', { type: 'task:failed', agentId: this.projectId, agentName: this.projectName, taskId });
+        try {
+          await this.bot.api.sendMessage(
+            this.chatId,
+            `🚫 *Circuit breaker* for ${this.projectName}\n\nSpent: $${totalSpent.toFixed(4)} / $${breakerProject.budgetUsd.toFixed(2)} — task not run.\n\nRaise the limit with /budget <amount> or remove it with /budget off.`,
+            { message_thread_id: this.topicId, parse_mode: 'Markdown' }
+          );
+        } catch (err) {
+          console.warn(`[ClaudeSession ${this.projectName}] Could not send circuit breaker notice:`, err instanceof Error ? err.message : err);
+        }
+        return;
+      }
+    }
+
     updateTask(this.db, taskId, { status: 'running' });
     this.liveOutput = '';
     agentEvents.emit('agent', { type: 'task:started', agentId: this.projectId, agentName: this.projectName, taskId, prompt });
@@ -366,7 +395,7 @@ export class ClaudeSession {
         if (totalSpent >= limit) {
           await this.bot.api.sendMessage(
             this.chatId,
-            `🚨 *Budget exceeded* for ${this.projectName}\n\nSpent: $${totalSpent.toFixed(4)} / $${limit.toFixed(2)} (${pct.toFixed(0)}%)\n\nUse /budget to review or /pause to stop tasks.`,
+            `🚨 *Budget exceeded* for ${this.projectName}\n\nSpent: $${totalSpent.toFixed(4)} / $${limit.toFixed(2)} (${pct.toFixed(0)}%)\n\nFurther tasks are blocked (circuit breaker). Raise the limit with /budget <amount> or remove it with /budget off.`,
             { message_thread_id: this.topicId, parse_mode: 'Markdown' }
           );
         } else if (pct >= 80) {
@@ -385,14 +414,19 @@ export class ClaudeSession {
       const AUTO_CHECKPOINT_MESSAGES = 30;
       const AUTO_CHECKPOINT_COST = 0.50;
       const latest = getLatestSession(this.db, this.projectId);
-      if (result.success && latest && (
-        (latest.messageCount ?? 0) >= AUTO_CHECKPOINT_MESSAGES ||
-        (latest.totalCostUsd ?? 0) >= AUTO_CHECKPOINT_COST
-      )) {
-        console.log(`[ClaudeSession ${this.projectName}] Auto-checkpoint triggered: messages=${latest.messageCount}, cost=$${latest.totalCostUsd?.toFixed(4)}`);
-        this.autoCheckpoint(latest.messageCount ?? 0, latest.totalCostUsd ?? 0).catch(err => {
-          console.warn(`[ClaudeSession ${this.projectName}] Auto-checkpoint failed:`, err instanceof Error ? err.message : err);
-        });
+      if (latest) {
+        const messagesSinceCheckpoint = (latest.messageCount ?? 0) - (latest.checkpointBaselineMessageCount ?? 0);
+        const costSinceCheckpoint = (latest.totalCostUsd ?? 0) - (latest.checkpointBaselineCostUsd ?? 0);
+        console.log(`[ClaudeSession ${this.projectName}] Session state: messages=${latest.messageCount} (+${messagesSinceCheckpoint} since checkpoint), cost=$${latest.totalCostUsd?.toFixed(4)} (+$${costSinceCheckpoint.toFixed(4)} since checkpoint)`);
+        if (result.success && (
+          messagesSinceCheckpoint >= AUTO_CHECKPOINT_MESSAGES ||
+          costSinceCheckpoint >= AUTO_CHECKPOINT_COST
+        )) {
+          console.log(`[ClaudeSession ${this.projectName}] Auto-checkpoint triggered: +${messagesSinceCheckpoint} messages, +$${costSinceCheckpoint.toFixed(4)} since last checkpoint`);
+          this.autoCheckpoint(messagesSinceCheckpoint, costSinceCheckpoint).catch(err => {
+            console.warn(`[ClaudeSession ${this.projectName}] Auto-checkpoint failed:`, err instanceof Error ? err.message : err);
+          });
+        }
       }
 
       updateTask(this.db, taskId, {
@@ -520,10 +554,10 @@ export class ClaudeSession {
    * (which threshold fired) and swallows failures so a broken checkpoint
    * never breaks the task loop.
    */
-  private async autoCheckpoint(messageCount: number, totalCostUsd: number): Promise<void> {
-    const reason = messageCount >= 30
-      ? `${messageCount} messages`
-      : `$${totalCostUsd.toFixed(4)} spent`;
+  private async autoCheckpoint(messagesSinceCheckpoint: number, costSinceCheckpoint: number): Promise<void> {
+    const reason = messagesSinceCheckpoint >= 30
+      ? `${messagesSinceCheckpoint} messages since last checkpoint`
+      : `$${costSinceCheckpoint.toFixed(4)} spent since last checkpoint`;
     try {
       await this.bot.api.sendMessage(
         this.chatId,
@@ -567,13 +601,20 @@ export class ClaudeSession {
       const claudeMdPath = path.join(this.projectPath, 'CLAUDE.md');
       const existing = existsSync(claudeMdPath) ? await readFile(claudeMdPath, 'utf8') : '';
       const block = formatCheckpointBlock(summary);
-      await writeFile(claudeMdPath, composeCheckpointAppend(existing, block), 'utf8');
+      await writeFile(claudeMdPath, composeCheckpointRotate(existing, block), 'utf8');
       appended = true;
     }
 
-    // Reset session: next task will start a fresh Claude Code session
+    // Reset session: next task will start a fresh Claude Code session.
+    // totalCostUsd/messageCount stay cumulative forever (they back /budget),
+    // so we snapshot them as the new checkpoint baseline instead of zeroing
+    // them — the auto-checkpoint trigger compares against this baseline.
     if (session) {
-      updateSession(this.db, session.id, { claudeSessionId: null });
+      updateSession(this.db, session.id, {
+        claudeSessionId: null,
+        checkpointBaselineCostUsd: session.totalCostUsd,
+        checkpointBaselineMessageCount: session.messageCount,
+      });
     }
 
     return { summary, appended };

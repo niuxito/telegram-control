@@ -3,6 +3,7 @@ import {
   CHECKPOINT_PROMPT,
   formatCheckpointBlock,
   composeCheckpointAppend,
+  composeCheckpointRotate,
 } from '../claude/checkpointFormat.js';
 
 describe('CHECKPOINT_PROMPT', () => {
@@ -89,5 +90,50 @@ describe('composeCheckpointAppend', () => {
     const result = composeCheckpointAppend(existing, block);
     expect(result.startsWith(existing)).toBe(true);
     expect(result.endsWith(block)).toBe(true);
+  });
+});
+
+describe('composeCheckpointRotate', () => {
+  it('returns the block alone when existing content is empty', () => {
+    const block = '\n---\n## Checkpoint 2026-05-01\n\nsummary\n';
+    expect(composeCheckpointRotate('', block)).toBe(block);
+  });
+
+  it('keeps the preamble but drops older checkpoint sections', () => {
+    const existing = [
+      '# Project',
+      '',
+      'Intro text.',
+      '',
+      '---',
+      '## Checkpoint 2026-05-01',
+      '',
+      'old summary',
+      '',
+      '---',
+      '## Checkpoint 2026-06-01',
+      '',
+      'older summary',
+      '',
+    ].join('\n');
+    const block = '\n---\n## Checkpoint 2026-07-16\n\nfresh summary\n';
+
+    const result = composeCheckpointRotate(existing, block);
+    expect(result).toContain('# Project');
+    expect(result).toContain('Intro text.');
+    expect(result).toContain('## Checkpoint 2026-07-16');
+    expect(result).toContain('fresh summary');
+    expect(result).not.toContain('2026-05-01');
+    expect(result).not.toContain('2026-06-01');
+    expect(result).not.toContain('old summary');
+    expect(result).not.toContain('older summary');
+  });
+
+  it('falls back to append when there is no checkpoint history yet', () => {
+    const existing = '# Project\n\nIntro text.\n';
+    const block = '\n---\n## Checkpoint 2026-07-16\n\nsummary\n';
+    expect(composeCheckpointRotate(existing, block)).toBe(
+      composeCheckpointAppend(existing, block)
+    );
   });
 });

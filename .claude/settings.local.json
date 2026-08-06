@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(npm install:*)",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "Bash(awk NR>=494 && NR<=520 *)",
+      "Bash(git *)",
+      "Bash(npx vitest *)",
+      "Bash(systemctl --user list-units --all)",
+      "Bash(systemctl list-units *)"
     ]
   }
 }

@@ -30,11 +30,14 @@ export function setupConfigHandlers(bot: any, projectManager: ProjectManager, db
       await ctx.reply('No session found. Start one with /task.');
       return;
     }
+    const messagesSinceCheckpoint = session.messageCount - session.checkpointBaselineMessageCount;
+    const costSinceCheckpoint = session.totalCostUsd - session.checkpointBaselineCostUsd;
     await ctx.reply(
       `🔗 Session Info\n` +
       `ID: ${session.claudeSessionId ?? 'none'}\n` +
-      `Messages: ${session.messageCount}\n` +
-      `Total cost: $${session.totalCostUsd.toFixed(4)}\n` +
+      `Messages (lifetime): ${session.messageCount}\n` +
+      `Total cost (lifetime): $${session.totalCostUsd.toFixed(4)}\n` +
+      `Since last checkpoint: ${messagesSinceCheckpoint} msgs / $${costSinceCheckpoint.toFixed(4)} (auto-checkpoint at 30 msgs or $0.50)\n` +
       `Last used: ${session.lastUsedAt}`
     );
   });

@@ -37,6 +37,8 @@ export function createTestDb() {
       mode TEXT NOT NULL DEFAULT 'cli',
       total_cost_usd REAL NOT NULL DEFAULT 0,
       message_count INTEGER NOT NULL DEFAULT 0,
+      checkpoint_baseline_cost_usd REAL NOT NULL DEFAULT 0,
+      checkpoint_baseline_message_count INTEGER NOT NULL DEFAULT 0,
       last_used_at INTEGER NOT NULL
     );
 

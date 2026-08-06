@@ -157,6 +157,8 @@ async function main() {
   try { sqlite.exec(`CREATE TABLE IF NOT EXISTS topic_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), sender TEXT NOT NULL, sender_name TEXT, text TEXT NOT NULL, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
   try { sqlite.exec(`CREATE TABLE IF NOT EXISTS ideas (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, added_by INTEGER, added_by_name TEXT, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
   try { sqlite.exec(`CREATE TABLE IF NOT EXISTS idea_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, idea_id INTEGER NOT NULL REFERENCES ideas(id) ON DELETE CASCADE, text TEXT NOT NULL, added_by INTEGER, added_by_name TEXT, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
+  try { sqlite.exec(`ALTER TABLE claude_sessions ADD COLUMN checkpoint_baseline_cost_usd REAL NOT NULL DEFAULT 0`); } catch { /* already exists */ }
+  try { sqlite.exec(`ALTER TABLE claude_sessions ADD COLUMN checkpoint_baseline_message_count INTEGER NOT NULL DEFAULT 0`); } catch { /* already exists */ }
 
   // 2. Create bot
   const bot = createBot();

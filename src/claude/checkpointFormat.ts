@@ -28,3 +28,21 @@ export function composeCheckpointAppend(existing: string, block: string): string
   const separator = existing.endsWith('\n') ? '' : '\n';
   return existing + separator + block;
 }
+
+/**
+ * Replaces the existing checkpoint history with a single fresh block.
+ *
+ * The file keeps the non-checkpoint preamble intact, but drops older
+ * checkpoint sections so CLAUDE.md stays small enough to load cheaply.
+ */
+export function composeCheckpointRotate(existing: string, block: string): string {
+  if (!existing) return block;
+
+  const checkpointStart = existing.search(/^---\n## Checkpoint /m);
+  if (checkpointStart === -1) {
+    return composeCheckpointAppend(existing, block);
+  }
+
+  const prefix = existing.slice(0, checkpointStart).trimEnd();
+  return prefix ? `${prefix}\n\n${block.trimStart()}` : block;
+}

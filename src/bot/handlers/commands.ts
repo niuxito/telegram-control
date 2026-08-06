@@ -2,6 +2,7 @@ import type { Context } from 'grammy';
 import type { ProjectManager } from '../../projects/ProjectManager.js';
 import { addGuest, removeGuest, listGuests, upsertAccessRequest, getAccessRequest, getPendingRequests, resolveAccessRequest } from '../../db/queries/guests.js';
 import { getTasksSince } from '../../db/queries/taskQueue.js';
+import { getLatestSession } from '../../db/queries/sessions.js';
 import { config } from '../../config.js';
 import type { Db } from '../../db/client.js';
 import { setupCodexLoginHandler } from './topic/codexLogin.js';
@@ -31,6 +32,7 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
       '/list — list all projects\n' +
       '/broadcast <prompt> — run a task in all active projects\n' +
       '/summary [hours] — activity summary (default: last 24h)\n' +
+      '/costs — lifetime spend and budget status across all projects\n' +
       '/uptime — server CPU, RAM, disk and bot uptime\n' +
       '/help — show this message\n' +
       '/idea <text> — save a project idea for later\n' +
@@ -373,6 +375,33 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
     await ctx.reply(`📡 Broadcast sent to ${projects.length} project(s):\n${results.join('\n')}`);
   });
 
+  // /costs — cross-project cost view: lifetime spend and budget status for every project
+  bot.command('costs', async (ctx: Context) => {
+    const projects = projectManager.getAllProjects();
+    if (projects.length === 0) {
+      await ctx.reply('No active projects.');
+      return;
+    }
+
+    const rows = projects
+      .map(p => ({
+        name: p.name,
+        spent: getLatestSession(db, p.id)?.totalCostUsd ?? 0,
+        limit: p.budgetUsd ?? null,
+      }))
+      .sort((a, b) => b.spent - a.spent);
+
+    const lines = rows.map(r => {
+      if (r.limit == null) return `• ${r.name} — $${r.spent.toFixed(4)}`;
+      const pct = (r.spent / r.limit) * 100;
+      const flag = r.spent >= r.limit ? ' 🚫' : pct >= 80 ? ' ⚠️' : '';
+      return `• ${r.name} — $${r.spent.toFixed(4)} / $${r.limit.toFixed(2)} (${pct.toFixed(0)}%)${flag}`;
+    });
+
+    const total = rows.reduce((sum, r) => sum + r.spent, 0);
+    await ctx.reply(`💰 Cost across projects (lifetime)\n\n${lines.join('\n')}\n\nTotal: $${total.toFixed(4)}`);
+  });
+
   bot.command('list', async (ctx: Context) => {
     const projects = projectManager.getAllProjects();
     if (projects.length === 0) {
@@ -395,6 +424,7 @@ export async function registerBotCommands(bot: any): Promise<void> {
     { command: 'list',          description: 'List all projects' },
     { command: 'broadcast',     description: 'Run a task in all active projects' },
     { command: 'summary',       description: 'Activity summary (default last 24h)' },
+    { command: 'costs',         description: 'Lifetime spend and budget status across all projects' },
     { command: 'uptime',        description: 'Server CPU, RAM, disk and bot uptime' },
     { command: 'help',          description: 'Show command help' },
     { command: 'idea',          description: 'Save a project idea, or list/delete/clear (global backlog)' },

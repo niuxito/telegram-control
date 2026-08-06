@@ -25,6 +25,11 @@ export const claudeSessions = sqliteTable('claude_sessions', {
   mode: text('mode', { enum: ['cli', 'api'] }).notNull().default('cli'),
   totalCostUsd: real('total_cost_usd').notNull().default(0),
   messageCount: integer('message_count').notNull().default(0),
+  // Snapshot of totalCostUsd/messageCount at the last checkpoint. The
+  // auto-checkpoint trigger compares current totals against this baseline
+  // instead of the totals themselves, since those stay cumulative for /budget.
+  checkpointBaselineCostUsd: real('checkpoint_baseline_cost_usd').notNull().default(0),
+  checkpointBaselineMessageCount: integer('checkpoint_baseline_message_count').notNull().default(0),
   lastUsedAt: integer('last_used_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
