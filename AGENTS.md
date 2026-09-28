@@ -1,24 +1,46 @@
-<!-- VERCEL BEST PRACTICES START -->
-## Best practices for developing on Vercel
+# telegram-control — context for AI coding agents
 
-These defaults are optimized for AI coding agents (and humans) working on apps that deploy to Vercel.
+## What this project is
+A Telegram bot that acts as a control center for running AI coding agent tasks
+across multiple software projects. Each project gets a Telegram forum topic; the
+bot routes user messages to Claude CLI, Codex CLI, or OpenCode and streams
+results back to the chat.
 
-- Treat Vercel Functions as stateless + ephemeral (no durable RAM/FS, no background daemons), use Blob or marketplace integrations for preserving state
-- Edge Functions (standalone) are deprecated; prefer Vercel Functions
-- Don't start new projects on Vercel KV/Postgres (both discontinued); use Marketplace Redis/Postgres instead
-- Store secrets in Vercel Env Variables; not in git or `NEXT_PUBLIC_*`
-- Provision Marketplace native integrations with `vercel integration add` (CI/agent-friendly)
-- Sync env + project settings with `vercel env pull` / `vercel pull` when you need local/offline parity
-- Use `waitUntil` for post-response work; avoid the deprecated Function `context` parameter
-- Set Function regions near your primary data source; avoid cross-region DB/service roundtrips
-- Tune Fluid Compute knobs (e.g., `maxDuration`, memory/CPU) for long I/O-heavy calls (LLMs, APIs)
-- Use Runtime Cache for fast **regional** caching + tag invalidation (don't treat it as global KV)
-- Use Cron Jobs for schedules; cron runs in UTC and triggers your production URL via HTTP GET
-- Use Vercel Blob for uploads/media; Use Edge Config for small, globally-read config
-- If Enable Deployment Protection is enabled, use a bypass secret to directly access them
-- Add OpenTelemetry via `@vercel/otel` on Node; don't expect OTEL support on the Edge runtime
-- Enable Web Analytics + Speed Insights early
-- Use AI Gateway for model routing, set AI_GATEWAY_API_KEY, using a model string (e.g. 'anthropic/claude-sonnet-4.6'), Gateway is already default in AI SDK
-  needed. Always curl https://ai-gateway.vercel.sh/v1/models first; never trust model IDs from memory
-- For durable agent loops or untrusted code: use Workflow (pause/resume/state) + Sandbox; use Vercel MCP for secure infra access
-<!-- VERCEL BEST PRACTICES END -->
+## Key architectural decisions
+- **Agent strategies** (`src/agents/`) implement a common `AgentStrategy`
+  interface. Adding a new agent means adding a file there and registering it in
+  `src/agents/index.ts`.
+- **Codex stderr is never forwarded to the user** — it contains internal
+  evaluation prompts. Only JSON-extracted text from stdout goes to Telegram.
+- **Project-internal tasks never auto-degrade** to free-tier agents that may
+  train on data. See `src/agents/router.ts` for the sensitivity model.
+- **ClaudeSession** manages a persistent Claude CLI process per project; Codex
+  and OpenCode are ephemeral (spawned per task).
+
+## Tech stack
+- Runtime: Node.js 22+ with ESM (`"type": "module"`)
+- Language: TypeScript 5 (strict mode, `noUncheckedIndexedAccess`)
+- Bot framework: grammY
+- Database: SQLite via better-sqlite3 + Drizzle ORM
+- Test runner: Vitest
+
+## Common commands
+```
+npm run build   # tsc → dist/
+npm test        # vitest run
+npm run dev     # tsx watch src/index.ts
+```
+
+## Sensitive areas
+- `src/claude/CodexStrategy.ts` — Codex CLI integration. Avoid leaking stderr.
+- `src/agents/router.ts` — privacy routing. Never route `project-internal`
+  tasks to free/data-retaining providers without explicit user consent.
+- `.env` — never commit. Credentials are in Vercel Env Variables for any
+  deployed sub-projects; for this bot they stay in `.env` on the host machine.
+
+## Additional context files
+- `docs/agents/opencode.md` — OpenCode CLI integration research (pre-implementation).
+- `docs/agents/vercel-context.md` — Vercel best practices (only relevant when
+  working on a sub-project that deploys to Vercel).
+- `API.md` — REST API exposed by this bot.
+- `CLAUDE.md` — session checkpoints and per-session notes.
