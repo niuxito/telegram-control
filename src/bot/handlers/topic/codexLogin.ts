@@ -1,4 +1,4 @@
-// /codex-login flow — kicks off `codex login --device-auth`, posts URL+code
+// /codex_login flow — kicks off `codex login --device-auth`, posts URL+code
 // to Telegram with a cancel button, and edits the message to success/failure
 // when the spawned process exits.
 //
@@ -26,7 +26,7 @@ export function clearPendingCodexLogin(userId: number): void {
 }
 
 export function setupCodexLoginHandler(bot: any): void {
-  bot.command('codex-login', async (ctx: Context) => {
+  bot.command('codex_login', async (ctx: Context) => {
     const userId = ctx.from?.id;
     if (!userId) return;
 

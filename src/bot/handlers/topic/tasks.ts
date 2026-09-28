@@ -339,7 +339,7 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     if (!result.success && result.errorType === 'auth_required') {
       await publishTopicMessage(ctx, chatId, project.topicId!, msgId,
         '🔑 La sesión de Codex con OpenAI ha expirado.\n\n' +
-        'Usa /codex-login para re-autenticar desde el móvil (te doy un ' +
+        'Usa /codex_login para re-autenticar desde el móvil (te doy un ' +
         'enlace y un código). Mientras tanto puedes seguir con /task ' +
         '(Claude) o /opencode.'
       );

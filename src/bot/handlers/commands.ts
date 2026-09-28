@@ -54,7 +54,7 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
       '🤖 Project topic — tasks:\n' +
       '/task <prompt> — run a Claude task\n' +
       '/codex <prompt> — run a task with Codex (ChatGPT subscription)\n' +
-      '/codex-login — re-authenticate Codex via OAuth device flow\n' +
+      '/codex_login — re-authenticate Codex via OAuth device flow\n' +
       '/opencode <prompt> — run a task with OpenCode (third AI agent)\n' +
       '/plan <prompt> — one-shot planning with Claude Opus 4.7 (deeper reasoning)\n' +
       '/status — current task status\n' +
@@ -116,7 +116,8 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
       '/pause — pause the project\n' +
       '/unpause — resume a paused project\n' +
       '/archive — archive the project\n' +
-      '/info — project details'
+      '/info — project details\n' +
+      '/setdefault [claude|codex|opencode] — show or set default agent for free-text messages'
     );
   });
 
@@ -439,7 +440,7 @@ export async function registerBotCommands(bot: any): Promise<void> {
     // Project topic — tasks
     { command: 'task',     description: 'Run a Claude task' },
     { command: 'codex',    description: 'Run a task with Codex (ChatGPT subscription)' },
-    { command: 'codex-login', description: 'Re-authenticate Codex via OAuth device flow' },
+    { command: 'codex_login', description: 'Re-authenticate Codex via OAuth device flow' },
     { command: 'opencode', description: 'Run a task with OpenCode (third AI agent)' },
     { command: 'plan',     description: 'Plan with Claude Opus 4.7 (one-shot, deeper reasoning)' },
     { command: 'status',   description: 'Current task status' },
@@ -481,6 +482,7 @@ export async function registerBotCommands(bot: any): Promise<void> {
     { command: 'unpause',    description: 'Resume a paused project' },
     { command: 'archive',    description: 'Archive the project' },
     { command: 'info',       description: 'Project details' },
+    { command: 'setdefault', description: 'Show or set default agent (claude|codex|opencode)' },
   ];
 
   await bot.api.setMyCommands(commands);

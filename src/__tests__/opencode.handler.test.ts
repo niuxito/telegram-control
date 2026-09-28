@@ -217,7 +217,7 @@ describe('/codex handler — auth_required branch', () => {
     const finalText = ctx.api.editMessageText.mock.calls.at(-1)![2] as string;
     expect(finalText).toContain('sesión de Codex');
     expect(finalText).toContain('expirado');
-    expect(finalText).toContain('/codex-login');
+    expect(finalText).toContain('/codex_login');
   });
 
   it('does NOT save anything to shared history when auth fails', async () => {
