@@ -37,7 +37,7 @@ export function setupConfigHandlers(bot: any, projectManager: ProjectManager, db
       `ID: ${session.claudeSessionId ?? 'none'}\n` +
       `Messages (lifetime): ${session.messageCount}\n` +
       `Total cost (lifetime): $${session.totalCostUsd.toFixed(4)}\n` +
-      `Since last checkpoint: ${messagesSinceCheckpoint} msgs / $${costSinceCheckpoint.toFixed(4)} (auto-checkpoint at 30 msgs or $0.50)\n` +
+      `Since last checkpoint: ${messagesSinceCheckpoint} msgs / $${costSinceCheckpoint.toFixed(4)} (auto-checkpoint at 30 msgs or $5.00)\n` +
       `Last used: ${session.lastUsedAt}`
     );
   });
@@ -64,6 +64,11 @@ export function setupConfigHandlers(bot: any, projectManager: ProjectManager, db
 
     if (session.isProcessing()) {
       await ctx.reply('⚠️ A task is running. Wait for it to finish before creating a checkpoint.');
+      return;
+    }
+
+    if (session.isCheckpointInProgress()) {
+      await ctx.reply('⚠️ An auto-checkpoint is already running. Wait for it to finish.');
       return;
     }
 
@@ -406,6 +411,7 @@ export function setupConfigHandlers(bot: any, projectManager: ProjectManager, db
       await ctx.reply(
         `🤖 Default agent for *${project.name}*\n\n` +
         `Current: ${AGENT_LABELS[current]}\n\n` +
+        `Recommended: ${AGENT_LABELS.codex} if Claude auth is flaky or you want fewer login interruptions.\n\n` +
         `Available:\n${list}`,
         { parse_mode: 'Markdown' }
       );

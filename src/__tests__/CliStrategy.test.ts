@@ -118,6 +118,20 @@ describe('classifyCliError', () => {
     });
   });
 
+  describe('auth_required classification', () => {
+    it('classifies not logged in as auth_required', () => {
+      expect(classifyCliError('Error: not logged in. Run claude login.')).toBe('auth_required');
+    });
+
+    it('classifies session expired as auth_required', () => {
+      expect(classifyCliError('Your session expired, please log in again.')).toBe('auth_required');
+    });
+
+    it('classifies unauthorized as auth_required', () => {
+      expect(classifyCliError('401 Unauthorized')).toBe('auth_required');
+    });
+  });
+
   describe('priority ordering', () => {
     it('classifies "quota 429" as usage_limit (quota checked before 429)', () => {
       expect(classifyCliError('quota exceeded, got 429')).toBe('usage_limit');

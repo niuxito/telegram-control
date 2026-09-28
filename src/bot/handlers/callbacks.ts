@@ -32,6 +32,7 @@ import { getAgent } from '../../agents/index.js';
 import { getPendingQuotaRetry, clearPendingQuotaRetry } from './topic/quotaRetry.js';
 import { insertTopicMessage } from '../../db/queries/topicMessages.js';
 import { getPendingCodexLogin, clearPendingCodexLogin } from './topic/codexLogin.js';
+import { getProjectById, updateProject } from '../../db/queries/projects.js';
 
 function isOwner(ctx: CallbackQueryContext<Context>): boolean {
   return ctx.from?.id === config.OWNER_USER_ID;
@@ -218,6 +219,23 @@ export function setupCallbackHandlers(bot: any, projectManager: ProjectManager, 
     await ctx.answerCallbackQuery('Starting Codex...');
     await ctx.editMessageText('🔄 Retrying with Codex (OpenAI)...');
     session.runWithCodex(taskId, task.prompt);
+  });
+
+  bot.callbackQuery(/^setdefault_codex:(\d+)$/, async (ctx: CallbackQueryContext<Context>) => {
+    if (!isOwner(ctx)) { await ctx.answerCallbackQuery('Unauthorized.'); return; }
+
+    const projectId = parseInt(ctx.match[1]);
+    const project = getProjectById(db, projectId);
+    if (!project) {
+      await ctx.answerCallbackQuery('Project not found.');
+      return;
+    }
+
+    updateProject(db, projectId, { defaultAgent: 'codex' });
+    await ctx.answerCallbackQuery('Default agent switched to Codex.');
+    await ctx.editMessageText(
+      `✅ Default agent for ${project.name} is now Codex.\n\nFree-text messages in this project will use Codex by default.`
+    );
   });
 
   // ── Quota retry: opt-in to OpenCode free Zen on usage_limit ───────────────

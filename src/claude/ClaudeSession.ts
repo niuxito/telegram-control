@@ -28,6 +28,16 @@ function isTransientTelegramError(err: unknown): boolean {
   return false;
 }
 
+/** Telegram's own required cooldown for a 429, in ms — takes priority over our backoff schedule. */
+function getRetryAfterMs(err: unknown): number | null {
+  if (!err || typeof err !== 'object') return null;
+  const e = err as { error_code?: number; parameters?: { retry_after?: number } };
+  if (e.error_code === 429 && typeof e.parameters?.retry_after === 'number') {
+    return e.parameters.retry_after * 1000;
+  }
+  return null;
+}
+
 /** Retries a Telegram API call on transient errors with exponential backoff (max ~30s total). */
 async function withTelegramRetry<T>(label: string, fn: () => Promise<T>, maxAttempts = 5): Promise<T> {
   let lastErr: unknown;
@@ -37,7 +47,10 @@ async function withTelegramRetry<T>(label: string, fn: () => Promise<T>, maxAtte
     } catch (err) {
       lastErr = err;
       if (!isTransientTelegramError(err) || attempt === maxAttempts) throw err;
-      const delay = Math.min(1500 * attempt, 8000);
+      // A 429's retry_after is a hard requirement from Telegram, not a suggestion — retrying
+      // sooner just gets rate-limited again, so it overrides our own backoff schedule.
+      const retryAfterMs = getRetryAfterMs(err);
+      const delay = retryAfterMs != null ? retryAfterMs + 250 : Math.min(1500 * attempt, 8000);
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[ClaudeSession] ${label} transient error (attempt ${attempt}/${maxAttempts}, retry in ${delay}ms): ${msg}`);
       await new Promise((r) => setTimeout(r, delay));
@@ -54,6 +67,7 @@ export class ClaudeSession {
   private topicId: number;
   private chatId: number;
   private processing = false;
+  private checkpointInProgress = false;
   private projectName = '';
   private liveOutput = '';
 
@@ -181,6 +195,17 @@ export class ClaudeSession {
         completedAt: new Date(),
       });
       agentEvents.emit('agent', { type: 'task:failed', agentId: this.projectId, agentName: this.projectName, taskId });
+      // The user's prompt otherwise vanishes with no visible response at all — best-effort
+      // notify even though the retries above already exhausted our Telegram budget.
+      try {
+        await this.bot.api.sendMessage(
+          this.chatId,
+          `⚠️ Could not start this task — Telegram wouldn't accept the message (${err instanceof Error ? err.message : String(err)}). Please resend it.`,
+          { message_thread_id: this.topicId }
+        );
+      } catch (notifyErr) {
+        console.error(`[ClaudeSession] Also failed to notify user of task ${taskId} failure:`, notifyErr);
+      }
       return;
     }
 
@@ -306,6 +331,39 @@ export class ClaudeSession {
       clearInterval(heartbeatTimer);
       this.currentTaskController = null;
 
+      if (!result.success && result.errorType === 'auth_required') {
+        const keyboard = new InlineKeyboard()
+          .text('🧠 Switch default to Codex', `setdefault_codex:${this.projectId}`);
+        const authMessage =
+          '🔑 Claude is not authenticated\n\n' +
+          'The Claude CLI session is logged out or expired, so this task was not run.\n\n' +
+          'Recommended: switch this project to Codex as the default agent with /setdefault codex, or re-authenticate Claude with claude login.';
+
+        try {
+          await this.bot.api.editMessageText(
+            this.chatId,
+            workingMsg.message_id,
+            authMessage,
+            { reply_markup: keyboard }
+          );
+        } catch {
+          await this.bot.api.sendMessage(this.chatId, authMessage, {
+            message_thread_id: this.topicId,
+            reply_markup: keyboard,
+          });
+        }
+
+        updateTask(this.db, taskId, {
+          status: 'failed',
+          result: result.error ?? authMessage,
+          costUsd: result.costUsd,
+          completedAt: new Date(),
+        });
+        this.liveOutput = '';
+        agentEvents.emit('agent', { type: 'task:failed', agentId: this.projectId, agentName: this.projectName, taskId });
+        return;
+      }
+
       // Detect rate/usage limit errors before rendering the final message
       const isLimitError = !result.success &&
         result.errorType !== undefined &&
@@ -411,21 +469,41 @@ export class ClaudeSession {
       // summarize it into CLAUDE.md and reset. Without this, `--resume` keeps
       // re-billing the whole conversation as input tokens forever.
       // Runs in the background so it doesn't delay the reply the user just got.
+      // COST THRESHOLD: this used to be $0.50, a leftover from when the check
+      // compared against cumulative totalCostUsd (any session past 50c would
+      // checkpoint forever after). It was later changed to compare against the
+      // delta since the last checkpoint, but the threshold itself was never
+      // revisited — a single non-trivial Sonnet task routinely costs more than
+      // $0.50 on its own, so this fired an auto-checkpoint after nearly every
+      // task ("con cada mensaje"). Raised to a value a single task won't hit.
+      // DISABLED 2026-09-25: still firing on ~every task even after the $5.0
+      // threshold fix, so turned off entirely until the real trigger is found.
+      const AUTO_CHECKPOINT_ENABLED = false;
       const AUTO_CHECKPOINT_MESSAGES = 30;
-      const AUTO_CHECKPOINT_COST = 0.50;
-      const latest = getLatestSession(this.db, this.projectId);
+      const AUTO_CHECKPOINT_COST = 5.0;
+      const latest = AUTO_CHECKPOINT_ENABLED ? getLatestSession(this.db, this.projectId) : null;
       if (latest) {
         const messagesSinceCheckpoint = (latest.messageCount ?? 0) - (latest.checkpointBaselineMessageCount ?? 0);
         const costSinceCheckpoint = (latest.totalCostUsd ?? 0) - (latest.checkpointBaselineCostUsd ?? 0);
         console.log(`[ClaudeSession ${this.projectName}] Session state: messages=${latest.messageCount} (+${messagesSinceCheckpoint} since checkpoint), cost=$${latest.totalCostUsd?.toFixed(4)} (+$${costSinceCheckpoint.toFixed(4)} since checkpoint)`);
-        if (result.success && (
+        if (result.success && !this.checkpointInProgress && (
           messagesSinceCheckpoint >= AUTO_CHECKPOINT_MESSAGES ||
           costSinceCheckpoint >= AUTO_CHECKPOINT_COST
         )) {
           console.log(`[ClaudeSession ${this.projectName}] Auto-checkpoint triggered: +${messagesSinceCheckpoint} messages, +$${costSinceCheckpoint.toFixed(4)} since last checkpoint`);
-          this.autoCheckpoint(messagesSinceCheckpoint, costSinceCheckpoint).catch(err => {
-            console.warn(`[ClaudeSession ${this.projectName}] Auto-checkpoint failed:`, err instanceof Error ? err.message : err);
-          });
+          // Guard is set synchronously (before the first await inside autoCheckpoint)
+          // so a task that finishes while this one's checkpoint CLI call is still
+          // in flight sees checkpointInProgress=true and doesn't fire a second one —
+          // without it, every subsequent task re-triggers because the baseline isn't
+          // written until the (possibly slow) checkpoint call completes.
+          this.checkpointInProgress = true;
+          this.autoCheckpoint(messagesSinceCheckpoint, costSinceCheckpoint)
+            .catch(err => {
+              console.warn(`[ClaudeSession ${this.projectName}] Auto-checkpoint failed:`, err instanceof Error ? err.message : err);
+            })
+            .finally(() => {
+              this.checkpointInProgress = false;
+            });
         }
       }
 
@@ -609,11 +687,17 @@ export class ClaudeSession {
     // totalCostUsd/messageCount stay cumulative forever (they back /budget),
     // so we snapshot them as the new checkpoint baseline instead of zeroing
     // them — the auto-checkpoint trigger compares against this baseline.
-    if (session) {
-      updateSession(this.db, session.id, {
+    // Re-fetch right before writing: `session` was read before the (possibly
+    // slow) checkpoint CLI call above, and another task may have completed
+    // and bumped totalCostUsd/messageCount in the meantime. Baselining off
+    // the stale snapshot would undercount and leave the trigger permanently
+    // past threshold.
+    const sessionAtReset = getLatestSession(this.db, this.projectId) ?? session;
+    if (sessionAtReset) {
+      updateSession(this.db, sessionAtReset.id, {
         claudeSessionId: null,
-        checkpointBaselineCostUsd: session.totalCostUsd,
-        checkpointBaselineMessageCount: session.messageCount,
+        checkpointBaselineCostUsd: sessionAtReset.totalCostUsd,
+        checkpointBaselineMessageCount: sessionAtReset.messageCount,
       });
     }
 
@@ -667,5 +751,9 @@ export class ClaudeSession {
 
   isProcessing() {
     return this.processing;
+  }
+
+  isCheckpointInProgress() {
+    return this.checkpointInProgress;
   }
 }

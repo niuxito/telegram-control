@@ -22,7 +22,7 @@ import {
   clearPendingVercelDeploy,
 } from '../bot/handlers/projectTopic.js';
 import { createTestDb } from './helpers/testDb.js';
-import { insertProject } from '../db/queries/projects.js';
+import { insertProject, getProjectById } from '../db/queries/projects.js';
 import type { TestDb } from './helpers/testDb.js';
 
 const OWNER_ID = 42;
@@ -245,6 +245,17 @@ describe('confirm_github_public callback', () => {
 
     // Pending state should be cleared
     expect(getPendingGithubPublic(OWNER_ID)).toBeUndefined();
+  });
+
+  it('switches the project default agent to Codex from the auth fallback button', async () => {
+    const ctx = makeCtx({ userId: OWNER_ID });
+    await bot.triggerCallback(`setdefault_codex:${projectId}`, ctx);
+
+    expect(ctx._answerCallbackQuery).toHaveBeenCalledWith('Default agent switched to Codex.');
+    expect(ctx._editMessageText).toHaveBeenCalledWith(
+      expect.stringContaining('Default agent for test-project is now Codex.')
+    );
+    expect(getProjectById(db, projectId)?.defaultAgent).toBe('codex');
   });
 });
 

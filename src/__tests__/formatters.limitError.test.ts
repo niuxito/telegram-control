@@ -75,8 +75,20 @@ describe('formatLimitError', () => {
     });
   });
 
+  describe('auth_required', () => {
+    it('returns a message indicating Claude is not authenticated', () => {
+      const result = formatLimitError('auth_required');
+      expect(result).toContain('not authenticated');
+    });
+
+    it('suggests switching the project to Codex', () => {
+      const result = formatLimitError('auth_required');
+      expect(result).toContain('/setdefault codex');
+    });
+  });
+
   describe('return type and format', () => {
-    const allTypes = ['usage_limit', 'rate_limit', 'overloaded', 'unknown'] as const;
+    const allTypes = ['usage_limit', 'rate_limit', 'overloaded', 'auth_required', 'unknown'] as const;
 
     it.each(allTypes)('returns a non-empty string for error type "%s"', (errorType) => {
       const result = formatLimitError(errorType);

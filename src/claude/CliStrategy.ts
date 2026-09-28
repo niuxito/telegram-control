@@ -12,7 +12,7 @@ export interface CliRunOptions {
   onInit?: (sessionId: string) => void;
 }
 
-export type CliErrorType = 'usage_limit' | 'rate_limit' | 'overloaded' | 'unknown';
+export type CliErrorType = 'usage_limit' | 'rate_limit' | 'overloaded' | 'auth_required' | 'unknown';
 
 export interface CliRunResult {
   success: boolean;
@@ -26,6 +26,7 @@ export interface CliRunResult {
 
 export function classifyCliError(text: string): CliErrorType {
   const t = text.toLowerCase();
+  if (/not logged in|not authenticated|session expired|unauthori[sz]ed|login required|auth.*required|please log in/i.test(t)) return 'auth_required';
   if (t.includes('usage limit') || t.includes('quota') || t.includes('upgrade') || t.includes('claude.ai/upgrade')) return 'usage_limit';
   if (t.includes('rate limit') || t.includes('too many requests') || t.includes('429')) return 'rate_limit';
   if (t.includes('overloaded')) return 'overloaded';

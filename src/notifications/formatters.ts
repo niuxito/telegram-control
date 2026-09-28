@@ -21,6 +21,12 @@ export function formatGitCommits(project: Project, commits: GitCommit[]): string
 
 export function formatLimitError(errorType: CliErrorType): string {
   switch (errorType) {
+    case 'auth_required':
+      return (
+        '🔑 Claude is not authenticated\n\n' +
+        'The Claude CLI session is logged out or expired, so this task was not run.\n\n' +
+        'Recommended: switch this project to Codex with /setdefault codex, or re-authenticate Claude with claude login.'
+      );
     case 'usage_limit':
       return (
         '⛔ Usage limit reached\n\n' +
