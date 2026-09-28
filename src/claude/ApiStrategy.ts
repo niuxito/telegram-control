@@ -5,7 +5,7 @@ const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 
 export async function parseProjectName(userMessage: string): Promise<string | null> {
   const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model: 'claude-haiku-4-5',
     max_tokens: 64,
     system: 'Extract only the project name (kebab-case, no spaces) from the user message. Respond with ONLY the name string (e.g. "price-tracker"). If you cannot extract a name, respond with null.',
     messages: [{ role: 'user', content: userMessage }],
@@ -23,7 +23,7 @@ export async function summarizeTaskResult(result: string): Promise<string> {
   if (result.length < 500) return result;
 
   const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model: 'claude-haiku-4-5',
     max_tokens: 300,
     messages: [{
       role: 'user',

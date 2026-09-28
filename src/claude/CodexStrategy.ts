@@ -91,8 +91,17 @@ function extractTextFromEvent(line: string): string | null {
   return null;
 }
 
+// Prefix injected before every user prompt to keep Codex responses concise.
+// Codex tends to be very verbose by default; this brings it in line with the
+// short Telegram-message format we need.
+const BREVITY_PREFIX =
+  'Respond concisely. Summarise what you did or found in 3-5 sentences maximum. ' +
+  'Skip preamble, internal thoughts, and tool traces. ' +
+  'If you need to share code or a diff, include only the most relevant snippet.\n\n';
+
 export async function runCodexTask(options: CodexRunOptions): Promise<CodexRunResult> {
   const { prompt, cwd, onTextChunk } = options;
+  const augmentedPrompt = BREVITY_PREFIX + prompt;
 
   // Preflight: cheap login probe. `codex exec` in non-interactive mode fails
   // silently when the OAuth session has expired (exit code != 0, stderr only
@@ -132,7 +141,7 @@ export async function runCodexTask(options: CodexRunOptions): Promise<CodexRunRe
     });
 
     // Send prompt via stdin and close it immediately
-    child.stdin.write(prompt + '\n');
+    child.stdin.write(augmentedPrompt + '\n');
     child.stdin.end();
 
     const timer = setTimeout(() => {
@@ -179,12 +188,21 @@ export async function runCodexTask(options: CodexRunOptions): Promise<CodexRunRe
       }
       console.log(`[CodexStrategy] Process closed, code=${code}, accumulated=${accumulatedText.length} chars`);
 
+      // stderr is NEVER shown to the user — it contains internal Codex diagnostics
+      // and, critically, the risk-evaluation prompt that Codex leaks to stderr before
+      // every exec run. Log it server-side only.
+      if (stderrBuffer.trim()) {
+        console.log(`[CodexStrategy] stderr (not forwarded to user): ${stderrBuffer.trim().slice(0, 500)}`);
+      }
+
       if (code === 0 && accumulatedText) {
         resolve({ success: true, result: accumulatedText });
       } else if (code === 0) {
-        resolve({ success: true, result: stderrBuffer.trim() || '(no output)' });
+        // No JSON text extracted but clean exit — not an error, just nothing to say.
+        resolve({ success: true, result: '(no output)' });
       } else {
-        const errMsg = stderrBuffer.trim() || `Codex exited with code ${code}`;
+        // Report exit code; do NOT include raw stderr which may contain internal prompts.
+        const errMsg = `Codex exited with code ${code}`;
         resolve({ success: false, result: accumulatedText, error: errMsg });
       }
     });
