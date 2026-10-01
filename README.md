@@ -28,4 +28,4 @@ Es la base con la que he construido el resto de mis proyectos desde entonces. Se
 
 ## Licencia
 
-Privado — todos los derechos reservados.
+[MIT](LICENSE)
