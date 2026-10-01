@@ -2,15 +2,8 @@
 #
 # Runs as your own user (agents need your git, gh and CLI credentials), no sudo.
 #
-# Install:
-#   mkdir -p ~/.config/systemd/user
-#   cp scripts/telegram-control.service ~/.config/systemd/user/
-#   # edit WorkingDirectory below if the repo is not at ~/telegram-control
-#   systemctl --user daemon-reload
-#   systemctl --user enable --now telegram-control
-#
-# Keep it running after you log out (needs to be done once):
-#   loginctl enable-linger "$USER"
+# Install with:  npm run install-service
+# It fills in WorkingDirectory and PATH, enables the service and starts it.
 #
 # Logs / restart:
 #   journalctl --user -u telegram-control -f

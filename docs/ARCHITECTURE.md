@@ -17,7 +17,7 @@ Telegram Control is a modular monolith: one Node.js process, one SQLite database
 | `src/index.ts` | Entry point: setup check first, then a dynamic import of `app.ts` (so a bad `.env` gets a readable error) |
 | `src/app.ts` | Bootstrap: database, bot, middleware, handlers, API, schedules, project loading |
 | `src/config.ts` | Validates `.env` with zod, then removes secrets from `process.env` so child processes cannot read them |
-| `src/setup/` | First-run checks for Node, dependencies, agent CLIs and `.env` |
+| `src/setup/` | First-run checks for Node, dependencies, agent CLIs and `.env`, and pairing (`/setup <code>`) that fills in the Telegram IDs |
 | `src/bot/handlers/` | Telegram commands and callbacks, grouped by domain (`topic/tasks`, `topic/git`, `topic/config`, …) |
 | `src/claude/` | `ClaudeSession` (per-project queue, sessions, checkpoints, cost) and the low-level CLI/API strategies and stream parsing |
 | `src/agents/` | Registry of agent backends and the router that picks or falls back between them |

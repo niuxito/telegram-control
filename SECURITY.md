@@ -12,6 +12,8 @@ Telegram Control gives an AI agent a shell on your machine and lets you drive it
 
 **Your Telegram account is the key.** Only `OWNER_USER_ID` can start tasks. Whoever controls that account controls the machine. Enable Telegram two-step verification and keep the bot token secret.
 
+**Pairing grants ownership.** On first start the pairing code is printed only on the host (terminal or `journalctl`). Whoever sends `/setup <code>` becomes `OWNER_USER_ID`, so do not share it. The code changes on every start and wrong codes are ignored silently.
+
 **Guests are read-only.** Guests can only run status commands and press the project status button. Every other command and button is owner-only by default.
 
 **The HTTP API exposes project paths and live task output.** It listens on `127.0.0.1` by default. On any other interface it refuses to start without `API_KEY`. Put it behind TLS if you expose it beyond your machine.

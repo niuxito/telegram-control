@@ -34,44 +34,51 @@ Any machine with Node works. A Raspberry Pi is a good always-on host, but not a 
 
 ## Getting started
 
+**1. Telegram.** Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy its token. Create a group, enable **Topics** in its settings, add the bot as **admin** with the *Manage topics* and *Delete messages* rights, and create a topic for new projects (for example "New Projects").
+
+**2. Install and start.**
+
 ```bash
 git clone https://github.com/niuxito/telegram-control.git
 cd telegram-control
 npm install
-cp .env.example .env   # fill in the values below
 npm run build
+cp .env.example .env    # set BOT_TOKEN, leave the IDs empty
 npm start
 ```
 
-On first start a setup check verifies Node, dependencies, agent CLIs and `.env`, and tells you how to fix anything missing (it creates `.env` from `.env.example` if there is none). Run it again at any time with `npm run setup`.
+A setup check verifies Node, dependencies, agent CLIs and `.env`, and tells you how to fix anything missing. Run it again at any time with `npm run setup`.
 
-### Telegram setup
+**3. Pair.** With only `BOT_TOKEN` set, the bot prints a one-time code. Send `/setup <code>` inside the new-projects topic: the bot checks its rights, saves the group, topic and owner IDs to `.env`, and starts. Whoever sends the code becomes the owner.
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy the token → `BOT_TOKEN`.
-2. Create a group, open its settings and enable **Topics** (this turns it into a supergroup).
-3. Add the bot to the group as **admin** with the *Manage topics* and *Delete messages* rights. Admins receive every message in the group, so privacy mode does not get in the way.
-4. Create a topic for new projects, for example "New Projects", and send any message in it.
-5. Get the IDs from that message: in Telegram Desktop or Web, right-click the message → *Copy Message Link*. It looks like `https://t.me/c/1234567890/5/12`:
-   - `SUPERGROUP_ID` is `-100` followed by the first number: `-1001234567890`
-   - `NEW_PROJECTS_TOPIC_ID` is the second number: `5`
-6. Get your own user ID by messaging [@userinfobot](https://t.me/userinfobot) → `OWNER_USER_ID`.
+**4. Keep it running** (Linux with systemd):
+
+```bash
+npm run install-service
+```
+
+It installs a systemd **user** service with `Restart=always`, using your current `PATH` so the agents find the same CLIs as your shell. Logs: `journalctl --user -u telegram-control -f`.
 
 ### Configuration (`.env`)
 
 | Variable | Required | Description |
 |---|---|---|
 | `BOT_TOKEN` | yes | Token from @BotFather |
-| `SUPERGROUP_ID` | yes | ID of the supergroup (negative number) |
-| `NEW_PROJECTS_TOPIC_ID` | yes | Thread ID of the topic used to create and import projects |
-| `OWNER_USER_ID` | yes | Your Telegram user ID. Only this user can run tasks |
+| `SUPERGROUP_ID` | set by pairing | ID of the supergroup (negative number) |
+| `NEW_PROJECTS_TOPIC_ID` | set by pairing | Thread ID of the topic used to create and import projects |
+| `OWNER_USER_ID` | set by pairing | Your Telegram user ID. Only this user can run tasks |
 | `ANTHROPIC_API_KEY` | no | Only if you use the Anthropic API instead of a Claude account |
 | `OPENAI_API_KEY` | no | Enables voice messages (Whisper) |
 | `PROJECTS_BASE_DIR` | no | Where projects live (default `~/projects`) |
 | `API_HOST` / `API_PORT` / `API_KEY` | no | HTTP API. Listens on `127.0.0.1:3001` by default; any other host requires `API_KEY` |
 
-### Run as a service
+<details>
+<summary>Setting the IDs by hand instead of pairing</summary>
 
-[`scripts/telegram-control.service`](scripts/telegram-control.service) is a systemd **user** service that restarts the bot on failure. Installation steps are in the file.
+- In Telegram Desktop or Web, right-click a message in the new-projects topic → *Copy Message Link*. It looks like `https://t.me/c/1234567890/5/12`: `SUPERGROUP_ID` is `-100` followed by the first number (`-1001234567890`) and `NEW_PROJECTS_TOPIC_ID` is the second (`5`).
+- Get your user ID from [@userinfobot](https://t.me/userinfobot) → `OWNER_USER_ID`.
+
+</details>
 
 ## Security
 

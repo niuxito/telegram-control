@@ -11,7 +11,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "test": "NODE_OPTIONS=--disable-warning=DEP0040 vitest run",
-    "test:watch": "NODE_OPTIONS=--disable-warning=DEP0040 vitest"
+    "test:watch": "NODE_OPTIONS=--disable-warning=DEP0040 vitest",
+    "install-service": "bash scripts/install-service.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",

@@ -298,37 +298,26 @@ function checkRequiredEnvVars(): CheckResult {
   // Merge with actual process.env (already-set vars take precedence)
   const merged = { ...env, ...process.env };
 
-  const required = [
-    'BOT_TOKEN',
-    'SUPERGROUP_ID',
-    'NEW_PROJECTS_TOPIC_ID',
-    'OWNER_USER_ID',
-  ];
-  // ANTHROPIC_API_KEY is optional if using Claude account auth
-  const optional = ['ANTHROPIC_API_KEY'];
-
-  const missing = required.filter((k) => !merged[k] || merged[k] === '');
-  const missingOptional = optional.filter((k) => !merged[k] || merged[k] === '');
-
-  if (missing.length === 0 && missingOptional.length === 0) {
-    return { label, status: 'ok', message: 'all set' };
+  if (!merged.BOT_TOKEN) {
+    return {
+      label,
+      status: 'error',
+      message: 'missing: BOT_TOKEN',
+      fix: 'Create a bot with @BotFather (/newbot) and set BOT_TOKEN in .env.\nThe group, topic and owner IDs can stay empty: the bot will ask for them on start.',
+    };
   }
 
-  if (missing.length > 0) {
-    let fix = `Edit .env and set: ${missing.join(', ')}`;
-    if (missingOptional.length > 0) {
-      fix += `\nOptional (not set): ${missingOptional.join(', ')} — not needed if using Claude account auth`;
-    }
-    return { label, status: 'error', message: `missing: ${missing.join(', ')}`, fix };
+  const ids = ['SUPERGROUP_ID', 'NEW_PROJECTS_TOPIC_ID', 'OWNER_USER_ID'];
+  const missingIds = ids.filter((k) => !merged[k]);
+  if (missingIds.length > 0) {
+    return {
+      label,
+      status: 'warn',
+      message: `${missingIds.join(', ')} not set — will be detected from Telegram on start`,
+    };
   }
 
-  // Only optional missing
-  return {
-    label,
-    status: 'warn',
-    message: `ANTHROPIC_API_KEY not set (OK if using Claude account auth)`,
-    fix: 'Set ANTHROPIC_API_KEY in .env if you want to use the Anthropic API directly.',
-  };
+  return { label, status: 'ok', message: 'all set' };
 }
 
 // ---------------------------------------------------------------------------
