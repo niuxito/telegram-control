@@ -11,6 +11,7 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   API_PORT: z.string().default('3001').transform(v => parseInt(v)),
+  API_HOST: z.string().default('127.0.0.1'),
   API_KEY: z.string().optional(),
   PROJECTS_BASE_DIR: z.string().default('~/projects'),
   DATA_DIR: z.string().default('./data'),

@@ -217,7 +217,7 @@ async function main() {
   setupFileHandler(bot, projectManager, db);
 
   // 6. Start API server
-  startApiServer(projectManager, db, config.API_PORT, config.API_KEY);
+  startApiServer(projectManager, db, config.API_PORT, config.API_HOST, config.API_KEY);
 
   // 7. Load active projects (starts watchers)
   await projectManager.loadActiveProjects();

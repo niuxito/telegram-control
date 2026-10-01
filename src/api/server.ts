@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
+import { timingSafeEqual } from 'crypto';
 import type { ProjectManager } from '../projects/ProjectManager.js';
 import type { Db } from '../db/client.js';
 import { getActiveProjects } from '../db/queries/projects.js';
@@ -8,10 +9,18 @@ import { agentEvents } from './events.js';
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
-function isAuthorized(req: IncomingMessage, apiKey: string | undefined): boolean {
+export function isAuthorized(req: IncomingMessage, apiKey: string | undefined): boolean {
   if (!apiKey) return true;
-  const auth = req.headers['authorization'] ?? '';
-  return auth === `Bearer ${apiKey}`;
+  const given = Buffer.from(req.headers['authorization'] ?? '');
+  const expected = Buffer.from(`Bearer ${apiKey}`);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+
+/** The API exposes project paths and live task output: never serve it beyond loopback without a key. */
+export function canStartApi(host: string, apiKey: string | undefined): boolean {
+  return LOOPBACK_HOSTS.has(host) || Boolean(apiKey);
 }
 
 function unauthorized(res: ServerResponse): void {
@@ -201,8 +210,14 @@ export function startApiServer(
   projectManager: ProjectManager,
   db: Db,
   port: number,
+  host: string,
   apiKey?: string,
 ): void {
+  if (!canStartApi(host, apiKey)) {
+    console.error(`[API] Refusing to listen on ${host} without API_KEY. Set API_KEY or use API_HOST=127.0.0.1.`);
+    return;
+  }
+
   const server = createServer((req, res) => {
     if (req.method === 'OPTIONS') {
       res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization' });
@@ -237,7 +252,7 @@ export function startApiServer(
     notFound(res);
   });
 
-  server.listen(port, () => {
-    console.log(`[API] Server running on http://localhost:${port}`);
+  server.listen(port, host, () => {
+    console.log(`[API] Server running on http://${host}:${port}`);
   });
 }

@@ -11,6 +11,8 @@ http://<host>:3001
 
 Default port is `3001`. Configure via `API_PORT` in `.env`.
 
+The API listens on `127.0.0.1` by default. Set `API_HOST` (e.g. `0.0.0.0`) to expose it on the network; in that case `API_KEY` is mandatory and the server refuses to start the API without it.
+
 ## Authentication
 
 Optional. If `API_KEY` is set in `.env`, all requests must include:
@@ -19,7 +21,7 @@ Optional. If `API_KEY` is set in `.env`, all requests must include:
 Authorization: Bearer <API_KEY>
 ```
 
-If `API_KEY` is not set, the API is open with no auth required.
+If `API_KEY` is not set, the API is open with no auth required — only allowed on loopback.
 
 ---
 
