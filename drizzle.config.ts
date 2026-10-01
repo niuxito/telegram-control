@@ -4,7 +4,7 @@ config();
 
 export default {
   schema: './src/db/schema.ts',
-  out: './src/db/migrations',
+  out: './drizzle',
   dialect: 'sqlite',
   dbCredentials: {
     url: process.env.DATA_DIR ? `${process.env.DATA_DIR}/control.db` : './data/control.db',

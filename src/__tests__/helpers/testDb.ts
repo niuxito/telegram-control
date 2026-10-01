@@ -1,9 +1,10 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from '../../db/schema.js';
+import { runMigrations } from '../../db/migrate.js';
 
 /**
- * Creates a fresh in-memory SQLite database with all tables created inline.
+ * Creates a fresh in-memory SQLite database built from the real migrations.
  * Each call returns a completely independent database instance.
  */
 export function createTestDb() {
@@ -11,130 +12,8 @@ export function createTestDb() {
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
 
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS projects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      local_path TEXT NOT NULL,
-      topic_id INTEGER UNIQUE,
-      status TEXT NOT NULL DEFAULT 'active',
-      created_at INTEGER NOT NULL,
-      archived_at INTEGER,
-      watch_files INTEGER NOT NULL DEFAULT 1,
-      watch_git INTEGER NOT NULL DEFAULT 1,
-      git_check_at INTEGER,
-      wake_word TEXT,
-      model TEXT,
-      qa_enabled INTEGER NOT NULL DEFAULT 1,
-      budget_usd REAL,
-      default_agent TEXT NOT NULL DEFAULT 'claude'
-    );
-
-    CREATE TABLE IF NOT EXISTS claude_sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id),
-      claude_session_id TEXT,
-      mode TEXT NOT NULL DEFAULT 'cli',
-      total_cost_usd REAL NOT NULL DEFAULT 0,
-      message_count INTEGER NOT NULL DEFAULT 0,
-      checkpoint_baseline_cost_usd REAL NOT NULL DEFAULT 0,
-      checkpoint_baseline_message_count INTEGER NOT NULL DEFAULT 0,
-      last_used_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS task_queue (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id),
-      prompt TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      live_message_id INTEGER,
-      result TEXT,
-      cost_usd REAL,
-      created_at INTEGER NOT NULL,
-      completed_at INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS local_issues (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id),
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'open',
-      created_at INTEGER NOT NULL,
-      closed_at INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS schedules (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id),
-      cron_expr TEXT NOT NULL,
-      prompt TEXT NOT NULL,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at INTEGER NOT NULL,
-      last_run_at INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS access_requests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL UNIQUE,
-      username TEXT,
-      full_name TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
-      requested_at INTEGER NOT NULL,
-      resolved_at INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS guests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL UNIQUE,
-      note TEXT,
-      added_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS project_notes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id),
-      text TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS topic_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id),
-      sender TEXT NOT NULL,
-      sender_name TEXT,
-      text TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS ideas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      text TEXT NOT NULL,
-      added_by INTEGER,
-      added_by_name TEXT,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS idea_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      idea_id INTEGER NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
-      text TEXT NOT NULL,
-      added_by INTEGER,
-      added_by_name TEXT,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS notification_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id),
-      type TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      sent_at INTEGER NOT NULL,
-      telegram_message_id INTEGER
-    );
-  `);
-
   const db = drizzle(sqlite, { schema });
+  runMigrations(db, sqlite);
   return { db, sqlite };
 }
 

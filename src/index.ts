@@ -1,6 +1,7 @@
 import { runWizard } from './setup/wizard.js';
 import { config } from './config.js';
 import { createDb } from './db/client.js';
+import { runMigrations } from './db/migrate.js';
 import { createBot } from './bot/bot.js';
 import { ProjectManager } from './projects/ProjectManager.js';
 import { createRouter } from './bot/router.js';
@@ -14,18 +15,19 @@ import { setupVoiceHandler } from './bot/handlers/voice.js';
 import { setupFileHandler } from './bot/handlers/file.js';
 import { startApiServer } from './api/server.js';
 import { ScheduleManager } from './projects/ScheduleManager.js';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Last-line-of-defense safety net. Every known error path is caught locally;
-// these handlers exist so a single transient failure (Telegram 5xx, network
-// blip, etc.) does not kill the long-running bot process. Registered at module
-// load so they cover startup errors too.
+// Last-line-of-defense safety net, registered at module load so it covers startup.
+// A rejected promise is usually a transient failure (Telegram 5xx, network blip),
+// so the bot stays up. An uncaught exception leaves the process in an unknown
+// state (e.g. the API failed to bind its port), so exit and let the supervisor
+// (systemd: Restart=always) start a clean process.
 process.on('uncaughtException', (err) => {
-  console.error('[Process] uncaughtException — bot stays up:', err);
+  console.error('[Process] uncaughtException — exiting:', err);
+  process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[Process] unhandledRejection — bot stays up:', reason);
@@ -41,124 +43,8 @@ async function main() {
   // 1. Create DB and run migrations
   const { db, sqlite } = createDb();
 
-  // Run migrations if migrations folder exists
-  try {
-    migrate(db, { migrationsFolder: path.join(__dirname, 'db/migrations') });
-    console.log('[Startup] Database migrations applied');
-  } catch (_err) {
-    // Migrations may not exist yet on first run; create tables manually
-    console.log('[Startup] No migrations found, using push mode');
-    sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS projects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        local_path TEXT NOT NULL,
-        topic_id INTEGER UNIQUE,
-        status TEXT NOT NULL DEFAULT 'active',
-        created_at INTEGER NOT NULL,
-        archived_at INTEGER,
-        watch_files INTEGER NOT NULL DEFAULT 1,
-        watch_git INTEGER NOT NULL DEFAULT 1,
-        git_check_at INTEGER,
-        wake_word TEXT,
-        model TEXT,
-        qa_enabled INTEGER NOT NULL DEFAULT 1,
-        budget_usd REAL,
-        default_agent TEXT NOT NULL DEFAULT 'claude'
-      );
-
-      CREATE TABLE IF NOT EXISTS claude_sessions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id INTEGER NOT NULL REFERENCES projects(id),
-        claude_session_id TEXT,
-        mode TEXT NOT NULL DEFAULT 'cli',
-        total_cost_usd REAL NOT NULL DEFAULT 0,
-        message_count INTEGER NOT NULL DEFAULT 0,
-        last_used_at INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS task_queue (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id INTEGER NOT NULL REFERENCES projects(id),
-        prompt TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        live_message_id INTEGER,
-        result TEXT,
-        cost_usd REAL,
-        created_at INTEGER NOT NULL,
-        completed_at INTEGER
-      );
-
-      CREATE TABLE IF NOT EXISTS local_issues (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id INTEGER NOT NULL REFERENCES projects(id),
-        title TEXT NOT NULL,
-        body TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'open',
-        created_at INTEGER NOT NULL,
-        closed_at INTEGER
-      );
-
-      CREATE TABLE IF NOT EXISTS schedules (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id INTEGER NOT NULL REFERENCES projects(id),
-        cron_expr TEXT NOT NULL,
-        prompt TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL,
-        last_run_at INTEGER
-      );
-
-      CREATE TABLE IF NOT EXISTS access_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL UNIQUE,
-        username TEXT,
-        full_name TEXT,
-        status TEXT NOT NULL DEFAULT 'pending',
-        requested_at INTEGER NOT NULL,
-        resolved_at INTEGER
-      );
-
-      CREATE TABLE IF NOT EXISTS guests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL UNIQUE,
-        note TEXT,
-        added_at INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS notification_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id INTEGER NOT NULL REFERENCES projects(id),
-        type TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        sent_at INTEGER NOT NULL,
-        telegram_message_id INTEGER
-      );
-
-      CREATE TABLE IF NOT EXISTS idea_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        idea_id INTEGER NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
-        text TEXT NOT NULL,
-        added_by INTEGER,
-        added_by_name TEXT,
-        created_at INTEGER NOT NULL
-      );
-    `);
-    console.log('[Startup] Tables created directly');
-  }
-
-  // Schema evolution for existing databases — idempotent, safe to re-run
-  try { sqlite.exec(`ALTER TABLE projects ADD COLUMN wake_word TEXT`); } catch { /* already exists */ }
-  try { sqlite.exec(`ALTER TABLE projects ADD COLUMN model TEXT`); } catch { /* already exists */ }
-  try { sqlite.exec(`ALTER TABLE projects ADD COLUMN qa_enabled INTEGER NOT NULL DEFAULT 1`); } catch { /* already exists */ }
-  try { sqlite.exec(`ALTER TABLE projects ADD COLUMN budget_usd REAL`); } catch { /* already exists */ }
-  try { sqlite.exec(`ALTER TABLE projects ADD COLUMN default_agent TEXT NOT NULL DEFAULT 'claude'`); } catch { /* already exists */ }
-  try { sqlite.exec(`CREATE TABLE IF NOT EXISTS project_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), text TEXT NOT NULL, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
-  try { sqlite.exec(`CREATE TABLE IF NOT EXISTS topic_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), sender TEXT NOT NULL, sender_name TEXT, text TEXT NOT NULL, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
-  try { sqlite.exec(`CREATE TABLE IF NOT EXISTS ideas (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, added_by INTEGER, added_by_name TEXT, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
-  try { sqlite.exec(`CREATE TABLE IF NOT EXISTS idea_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, idea_id INTEGER NOT NULL REFERENCES ideas(id) ON DELETE CASCADE, text TEXT NOT NULL, added_by INTEGER, added_by_name TEXT, created_at INTEGER NOT NULL)`); } catch { /* already exists */ }
-  try { sqlite.exec(`ALTER TABLE claude_sessions ADD COLUMN checkpoint_baseline_cost_usd REAL NOT NULL DEFAULT 0`); } catch { /* already exists */ }
-  try { sqlite.exec(`ALTER TABLE claude_sessions ADD COLUMN checkpoint_baseline_message_count INTEGER NOT NULL DEFAULT 0`); } catch { /* already exists */ }
+  runMigrations(db, sqlite);
+  console.log('[Startup] Database migrations applied');
 
   // 2. Create bot
   const bot = createBot();
