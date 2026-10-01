@@ -18,4 +18,19 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
 
-export const config = envSchema.parse(process.env);
+function loadConfig() {
+  const parsed = envSchema.safeParse(process.env);
+  if (!parsed.success) {
+    const problems = parsed.error.issues.map(i => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
+    console.error(`Invalid configuration in .env:\n${problems}\n\nSee .env.example and the Configuration section of README.md.`);
+    process.exit(1);
+  }
+  return parsed.data;
+}
+
+export const config = loadConfig();
+
+// Secrets stay in `config` only. Agents, `npm test` and git/gh run as child
+// processes that inherit process.env, and must not be able to read them.
+export const SECRET_ENV_VARS = ['BOT_TOKEN', 'API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY'] as const;
+for (const name of SECRET_ENV_VARS) delete process.env[name];

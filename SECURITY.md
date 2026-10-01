@@ -8,6 +8,8 @@ Telegram Control gives an AI agent a shell on your machine and lets you drive it
 
 **Untrusted content can steer an agent (prompt injection).** An agent reads the code, issues, diffs and files it works on. A cloned repository, a pull request or an issue written by someone else can contain instructions that the agent follows. Treat every task on content you do not control as running that content's author's commands.
 
+**The bot's own secrets are kept out of reach.** `BOT_TOKEN`, `API_KEY`, `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are removed from the environment after the configuration is read, so agents, `npm test` and other child processes do not inherit them. Anything else the agent's user can access (files, CLI logins) is still reachable.
+
 **Your Telegram account is the key.** Only `OWNER_USER_ID` can start tasks. Whoever controls that account controls the machine. Enable Telegram two-step verification and keep the bot token secret.
 
 **Guests are read-only.** Guests can only run status commands and press the project status button. Every other command and button is owner-only by default.
