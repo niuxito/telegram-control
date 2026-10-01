@@ -15,3 +15,7 @@ id_ed25519
 .DS_Store
 secrets.*
 credentials.*
+
+# Local state
+data/.setup-complete
+.claude/settings.local.json
