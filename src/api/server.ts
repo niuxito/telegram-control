@@ -252,6 +252,11 @@ export function startApiServer(
     notFound(res);
   });
 
+  server.on('error', (err) => {
+    console.error('[API] Server error — exiting:', err);
+    process.exit(1);
+  });
+
   server.listen(port, host, () => {
     console.log(`[API] Server running on http://${host}:${port}`);
   });

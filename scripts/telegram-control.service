@@ -1,43 +1,38 @@
-# systemd service file for Telegram Control Center on Raspberry Pi
+# systemd user service for Telegram Control.
 #
-# Installation:
-#   1. Edit the User= and WorkingDirectory= lines below to match your setup.
-#      Default assumes user "pi" and project cloned to /home/pi/telegram-control.
+# Runs as your own user (agents need your git, gh and CLI credentials), no sudo.
 #
-#   2. Copy this file to systemd:
-#        sudo cp scripts/telegram-control.service /etc/systemd/system/telegram-control.service
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp scripts/telegram-control.service ~/.config/systemd/user/
+#   # edit WorkingDirectory below if the repo is not at ~/telegram-control
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now telegram-control
 #
-#   3. Reload systemd and enable the service:
-#        sudo systemctl daemon-reload
-#        sudo systemctl enable telegram-control
-#        sudo systemctl start telegram-control
+# Keep it running after you log out (needs to be done once):
+#   loginctl enable-linger "$USER"
 #
-#   4. Check status / logs:
-#        sudo systemctl status telegram-control
-#        sudo journalctl -u telegram-control -f
+# Logs / restart:
+#   journalctl --user -u telegram-control -f
+#   systemctl --user restart telegram-control
 #
-#   5. To stop / restart:
-#        sudo systemctl stop telegram-control
-#        sudo systemctl restart telegram-control
+# The bot exits on unrecoverable errors and relies on Restart=always.
 
 [Unit]
-Description=Telegram Control Center
+Description=Telegram Control
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Change "pi" to your actual Linux username if different
-User=pi
-# Change this path to wherever you cloned the project
-WorkingDirectory=/home/pi/telegram-control
-ExecStart=/usr/bin/node dist/index.js
-Restart=on-failure
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=telegram-control
+WorkingDirectory=%h/telegram-control
+# npm start puts node_modules/.bin (codex, opencode) on PATH
+ExecStart=/usr/bin/env npm start
+Restart=always
+RestartSec=5
 Environment=NODE_ENV=production
+# Agent CLIs installed under ~/.local/bin or ~/.npm-global/bin must be on PATH
+Environment=PATH=%h/.local/bin:%h/.npm-global/bin:%h/.opencode/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
