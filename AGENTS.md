@@ -35,6 +35,8 @@ npm run dev     # tsx watch src/index.ts
 - `src/claude/CodexStrategy.ts` — Codex CLI integration. Avoid leaking stderr.
 - `src/agents/router.ts` — privacy routing. Never route `project-internal`
   tasks to free/data-retaining providers without explicit user consent.
+- `src/config.ts` — secrets are removed from `process.env` after parsing; never pass them to child processes.
+- `src/bot/middleware/guestGuard.ts` — allowlist; new commands are owner-only unless added there.
 - `.env` — never commit. Credentials are in Vercel Env Variables for any
   deployed sub-projects; for this bot they stay in `.env` on the host machine.
 
@@ -43,4 +45,6 @@ npm run dev     # tsx watch src/index.ts
 - `docs/agents/vercel-context.md` — Vercel best practices (only relevant when
   working on a sub-project that deploys to Vercel).
 - `API.md` — REST API exposed by this bot.
+- `docs/ARCHITECTURE.md` — code map, persistence/migrations, process model.
+- `SECURITY.md` — threat model; keep it accurate when touching agents, guests, the API or secrets.
 - `CLAUDE.md` — session checkpoints and per-session notes.

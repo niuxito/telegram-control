@@ -43,7 +43,18 @@ npm run build
 npm start
 ```
 
-On first start a setup check verifies Node, dependencies and agent CLIs and tells you how to fix anything missing. Run it again at any time with `npm run setup`.
+On first start a setup check verifies Node, dependencies, agent CLIs and `.env`, and tells you how to fix anything missing (it creates `.env` from `.env.example` if there is none). Run it again at any time with `npm run setup`.
+
+### Telegram setup
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy the token → `BOT_TOKEN`.
+2. Create a group, open its settings and enable **Topics** (this turns it into a supergroup).
+3. Add the bot to the group as **admin** with the *Manage topics* and *Delete messages* rights. Admins receive every message in the group, so privacy mode does not get in the way.
+4. Create a topic for new projects, for example "New Projects", and send any message in it.
+5. Get the IDs from that message: in Telegram Desktop or Web, right-click the message → *Copy Message Link*. It looks like `https://t.me/c/1234567890/5/12`:
+   - `SUPERGROUP_ID` is `-100` followed by the first number: `-1001234567890`
+   - `NEW_PROJECTS_TOPIC_ID` is the second number: `5`
+6. Get your own user ID by messaging [@userinfobot](https://t.me/userinfobot) → `OWNER_USER_ID`.
 
 ### Configuration (`.env`)
 
@@ -75,7 +86,7 @@ npx tsc --noEmit     # type check
 npm run db:generate  # create a migration after changing src/db/schema.ts
 ```
 
-Migrations live in [`drizzle/`](drizzle) and run on startup.
+Migrations live in [`drizzle/`](drizzle) and run on startup. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a map of the code and the areas where help is welcome.
 
 Stack: TypeScript · [grammY](https://grammy.dev) · SQLite + [Drizzle ORM](https://orm.drizzle.team) · chokidar · simple-git · node-cron.
 
