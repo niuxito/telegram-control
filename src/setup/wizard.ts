@@ -1,5 +1,6 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
+import { parse as parseDotenv } from 'dotenv';
 import path from 'path';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
@@ -135,10 +136,13 @@ function checkClaudeCli(): CheckResult {
 
 function checkClaudeAuth(): CheckResult {
   const label = 'Claude authenticated';
-  // Try `claude whoami` first; fall back to checking ~/.claude/
-  const out = tryRun('claude whoami 2>/dev/null');
-  if (out && out.length > 0 && !out.toLowerCase().includes('not logged')) {
-    return { label, status: 'ok', message: out.split('\n')[0] };
+  // `claude auth status` prints JSON without starting a session (no tokens spent)
+  const out = tryRun('claude auth status --json 2>/dev/null');
+  if (out) {
+    try {
+      const status = JSON.parse(out);
+      if (status.loggedIn) return { label, status: 'ok', message: `logged in (${status.authMethod ?? 'unknown method'})` };
+    } catch { /* older CLI without `auth status`: fall through */ }
   }
   // Fallback: check for credentials file
   const homeDir = process.env.HOME || process.env.USERPROFILE || '';
@@ -288,18 +292,8 @@ function checkRequiredEnvVars(): CheckResult {
   const envPath = path.join(PROJECT_ROOT, '.env');
   const env: Record<string, string> = {};
 
-  if (fs.existsSync(envPath)) {
-    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIndex = trimmed.indexOf('=');
-      if (eqIndex === -1) continue;
-      const key = trimmed.slice(0, eqIndex).trim();
-      const value = trimmed.slice(eqIndex + 1).trim();
-      env[key] = value;
-    }
-  }
+  // Same parser as config.ts, so inline comments (`KEY=   # hint`) count as empty
+  if (fs.existsSync(envPath)) Object.assign(env, parseDotenv(fs.readFileSync(envPath)));
 
   // Merge with actual process.env (already-set vars take precedence)
   const merged = { ...env, ...process.env };
@@ -413,7 +407,11 @@ export async function runWizard(): Promise<boolean> {
     return true;
   }
 
-  // There are errors — ask the user
+  // There are errors — ask the user, unless there is nobody to ask (systemd, CI)
+  if (!process.stdin.isTTY) {
+    console.log('[Setup] Required items missing. Fix them and start again.\n');
+    return false;
+  }
   const answer = await prompt('Fix required items and run again, or start anyway? [fix/start/quit]: ');
 
   if (answer === 'start') {

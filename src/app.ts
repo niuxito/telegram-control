@@ -1,4 +1,3 @@
-import { runWizard } from './setup/wizard.js';
 import { config } from './config.js';
 import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
@@ -15,29 +14,9 @@ import { setupVoiceHandler } from './bot/handlers/voice.js';
 import { setupFileHandler } from './bot/handlers/file.js';
 import { startApiServer } from './api/server.js';
 import { ScheduleManager } from './projects/ScheduleManager.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Last-line-of-defense safety net, registered at module load so it covers startup.
-// A rejected promise is usually a transient failure (Telegram 5xx, network blip),
-// so the bot stays up. An uncaught exception leaves the process in an unknown
-// state (e.g. the API failed to bind its port), so exit and let the supervisor
-// (systemd: Restart=always) start a clean process.
-process.on('uncaughtException', (err) => {
-  console.error('[Process] uncaughtException — exiting:', err);
-  process.exit(1);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('[Process] unhandledRejection — bot stays up:', reason);
-});
-
-async function main() {
-  // 0. Run setup wizard (skipped automatically after first successful run)
-  const shouldStart = await runWizard();
-  if (!shouldStart) process.exit(0);
-
+export async function startApp(): Promise<void> {
   console.log('[Startup] Initializing Telegram Control Center...');
 
   // 1. Create DB and run migrations
@@ -147,8 +126,3 @@ async function main() {
   sqlite.close();
   console.log('[Shutdown] Done.');
 }
-
-main().catch((err) => {
-  console.error('[Fatal]', err);
-  process.exit(1);
-});
