@@ -1,31 +1,84 @@
 # Telegram Control
 
-Orquestador de agentes de IA controlado por Telegram. Gestiono todos mis proyectos personales —código, despliegues, revisiones— sin salir de un chat.
+An AI agent orchestrator you drive from Telegram. Every project is a topic in a Telegram supergroup: send a message, an agent (Claude Code, Codex or OpenCode) works on the repo, commits, can deploy, and reports back in the same topic.
 
-## Por qué existe
+[Leer en español](README.es.md)
 
-Trabajar con agentes de IA (Claude, Codex, OpenCode) implicaba abrir un terminal, elegir el proyecto correcto, lanzar la tarea y esperar delante de la pantalla. Con varios proyectos activos a la vez, cambiar de contexto era el verdadero coste. Telegram Control convierte cada proyecto en un tópico de un chat: lanzo una tarea desde el móvil, sigo el progreso en tiempo real y reviso el resultado cuando puedo, sin depender de tener el portátil abierto.
+## Why
 
-## Cómo funciona
+Working with AI coding agents meant opening a terminal, picking the right project, starting the task and waiting in front of the screen. With several projects active at once, the context switching was the real cost. Telegram Control turns each project into a chat topic: start a task from your phone, follow its progress live and review the result when you can, without keeping a laptop open.
 
-- Cada proyecto vive en su propio tópico dentro de un supergrupo de Telegram.
-- Las tareas se encolan por proyecto: se procesan en orden, con historial y estado (pendiente / en curso / completada / fallida).
-- Motor de IA intercambiable por proyecto: Claude, Codex u OpenCode, con sesiones persistentes para mantener contexto y controlar el coste.
-- Vigila cambios de archivos y commits de git automáticamente, y puede programar tareas por cron.
-- Guarda notas, revisa diffs y PRs, y hace checkpoints de sesión —resume el trabajo hecho y reinicia el contexto— sin perder el hilo.
+## Features
 
-## Despliegue
+- **One topic per project.** Plain messages in a project topic become tasks for that project.
+- **Per-project task queue.** Tasks run in order, with history, status, cost and full logs (`/queue`, `/tasklist`, `/tasklog`).
+- **Pluggable agents.** Claude Code, Codex or OpenCode per project or per task, with persistent sessions to keep context and control cost.
+- **Session checkpoints.** Summarise the work done and reset the context without losing the thread.
+- **Reviews and issues.** Review the current diff or a PR, and create issues through a planning agent.
+- **Schedules.** Run a prompt on a cron expression.
+- **Notifications.** File changes and new git commits are reported in the project topic.
+- **Deploys from the chat.** Push to GitHub and deploy to Vercel without leaving Telegram.
+- **Guests.** Give other people read-only access to project status.
+- **HTTP + SSE API** to watch agents from other tools (see [API.md](API.md)).
 
-Puede ejecutarse en cualquier máquina con Node —lo uso habitualmente en una Raspberry Pi, pero no es una dependencia—, y también se despliega directamente en un proveedor cloud, en mi caso Vercel. El despliegue se dispara desde el propio chat: no hace falta salir de Telegram para pasar de código a producción.
+Send `/help` in the group for the full command list.
 
-## Arquitectura
+## Requirements
 
-TypeScript · grammy (framework de bots de Telegram) · SQLite + Drizzle ORM para persistencia · chokidar (vigilancia de archivos) · simple-git (vigilancia de git) · node-cron (tareas programadas) · API HTTP + SSE para exponer el estado de los agentes en tiempo real a consumidores externos.
+- Node.js 20+ and build tools for `better-sqlite3` (`build-essential`, `python3` on Debian/Ubuntu).
+- A Telegram bot token from [@BotFather](https://t.me/BotFather) and a supergroup with **topics enabled**, with the bot as admin.
+- At least one agent CLI, installed and logged in as the user that runs the bot: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude login`), and optionally Codex or OpenCode.
+- Optional: `gh` (GitHub CLI) and `vercel` for issues, PRs and deploys.
 
-## Estado actual
+Any machine with Node works. A Raspberry Pi is a good always-on host, but not a requirement.
 
-Es la base con la que he construido el resto de mis proyectos desde entonces. Según mi propia auditoría interna (julio 2026): utilidad del producto 8.7/10, arquitectura razonablemente modular pero con lógica concentrada en handlers grandes — la mayor deuda técnica es de mantenibilidad, no de funcionalidad.
+## Getting started
 
-## Licencia
+```bash
+git clone https://github.com/niuxito/telegram-control.git
+cd telegram-control
+npm install
+cp .env.example .env   # fill in the values below
+npm run build
+npm start
+```
+
+On first start a setup check verifies Node, dependencies and agent CLIs and tells you how to fix anything missing. Run it again at any time with `npm run setup`.
+
+### Configuration (`.env`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `BOT_TOKEN` | yes | Token from @BotFather |
+| `SUPERGROUP_ID` | yes | ID of the supergroup (negative number) |
+| `NEW_PROJECTS_TOPIC_ID` | yes | Thread ID of the topic used to create and import projects |
+| `OWNER_USER_ID` | yes | Your Telegram user ID. Only this user can run tasks |
+| `ANTHROPIC_API_KEY` | no | Only if you use the Anthropic API instead of a Claude account |
+| `OPENAI_API_KEY` | no | Enables voice messages (Whisper) |
+| `PROJECTS_BASE_DIR` | no | Where projects live (default `~/projects`) |
+| `API_HOST` / `API_PORT` / `API_KEY` | no | HTTP API. Listens on `127.0.0.1:3001` by default; any other host requires `API_KEY` |
+
+### Run as a service
+
+[`scripts/telegram-control.service`](scripts/telegram-control.service) is a systemd **user** service that restarts the bot on failure. Installation steps are in the file.
+
+## Security
+
+Agents run with their permission prompts disabled, as your user, on your machine. Read [SECURITY.md](SECURITY.md) before you install it.
+
+## Development
+
+```bash
+npm run dev          # watch mode
+npm test             # vitest
+npx tsc --noEmit     # type check
+npm run db:generate  # create a migration after changing src/db/schema.ts
+```
+
+Migrations live in [`drizzle/`](drizzle) and run on startup.
+
+Stack: TypeScript · [grammY](https://grammy.dev) · SQLite + [Drizzle ORM](https://orm.drizzle.team) · chokidar · simple-git · node-cron.
+
+## License
 
 [MIT](LICENSE)
