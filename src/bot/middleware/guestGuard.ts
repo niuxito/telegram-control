@@ -1,12 +1,14 @@
 import type { Context, NextFunction } from 'grammy';
 import { config } from '../../config.js';
 
-// Commands that mutate state — guests are not allowed to run these
-const WRITE_COMMANDS = new Set([
-  'task', 'cancel', 'watch', 'gitwatch', 'pause', 'unpause', 'archive',
-  'github', 'vercel', 'newsession', 'alias', 'issue', 'new', 'import',
-  'test', 'guest',
+// Guests get read-only access. Everything is denied unless listed here, so a
+// new command or button is owner-only until it is explicitly allowed.
+export const GUEST_COMMANDS = new Set([
+  'help', 'start', 'status', 'info', 'list', 'queue', 'tasklist', 'tasklog',
+  'session', 'summary', 'uptime', 'costs', 'requestaccess',
 ]);
+
+const GUEST_CALLBACKS = [/^project:status:\d+$/];
 
 export async function guestGuard(ctx: Context, next: NextFunction): Promise<void> {
   // Owner bypasses all restrictions
@@ -15,30 +17,26 @@ export async function guestGuard(ctx: Context, next: NextFunction): Promise<void
     return;
   }
 
-  // Allow /requestaccess for everyone (handled before auth blocks)
-  if (ctx.message?.text?.startsWith('/requestaccess')) {
-    await next();
-    return;
-  }
-
-  // For guests: block write commands
-  if (ctx.message?.text?.startsWith('/')) {
-    const cmd = ctx.message.text.slice(1).split(/[\s@]/)[0].toLowerCase();
-    if (WRITE_COMMANDS.has(cmd)) {
-      await ctx.reply('This command is not available for guests (read-only access).');
+  const text = ctx.message?.text;
+  if (text?.startsWith('/')) {
+    const cmd = text.slice(1).split(/[\s@]/)[0].toLowerCase();
+    if (GUEST_COMMANDS.has(cmd)) {
+      await next();
       return;
     }
-  }
-
-  // Block plain text messages (would trigger wake-word task dispatch)
-  if (ctx.message?.text && !ctx.message.text.startsWith('/')) {
+    await ctx.reply('This command is not available for guests (read-only access).');
     return;
   }
 
-  // Block voice messages
-  if (ctx.message?.voice) {
+  const data = ctx.callbackQuery?.data;
+  if (data !== undefined) {
+    if (GUEST_CALLBACKS.some(re => re.test(data))) {
+      await next();
+      return;
+    }
+    await ctx.answerCallbackQuery('Read-only access.');
     return;
   }
 
-  await next();
+  // Plain text (wake-word dispatch), voice, files, photos, etc. are ignored
 }
