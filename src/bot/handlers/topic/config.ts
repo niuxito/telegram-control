@@ -1,6 +1,6 @@
 import type { Context } from 'grammy';
 import type { ProjectManager } from '../../../projects/ProjectManager.js';
-import { getLatestSession } from '../../../db/queries/sessions.js';
+import { getLatestSession, updateSession } from '../../../db/queries/sessions.js';
 import { updateProject } from '../../../db/queries/projects.js';
 import { insertNote, getRecentNotes, deleteNote, clearNotes } from '../../../db/queries/projectNotes.js';
 import { DEFAULT_WAKE_WORD } from '../voice.js';
@@ -43,7 +43,20 @@ export function setupConfigHandlers(bot: any, projectManager: ProjectManager, db
   });
 
   bot.command('newsession', async (ctx: Context) => {
-    await ctx.reply('🔄 New session will start on next /task command.');
+    const project = projectManager.getByTopicId(ctx.message?.message_thread_id ?? -1);
+    if (!project) return;
+
+    const session = getLatestSession(db, project.id);
+    if (!session) {
+      await ctx.reply('No session to reset — the next task will start a new one anyway.');
+      return;
+    }
+
+    // This was previously a no-op that only claimed to reset the session —
+    // the stored claudeSessionId never actually got cleared, so --resume
+    // kept targeting the same (possibly broken) CLI session forever.
+    updateSession(db, session.id, { claudeSessionId: null });
+    await ctx.reply('🔄 Session reset. The next task will start a brand new Claude Code session.');
   });
 
   // /checkpoint — summarize current session into CLAUDE.md and reset
