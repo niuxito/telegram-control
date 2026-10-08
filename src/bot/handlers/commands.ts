@@ -1,7 +1,7 @@
 import type { Context } from 'grammy';
 import type { ProjectManager } from '../../projects/ProjectManager.js';
 import { addGuest, removeGuest, listGuests, upsertAccessRequest, getAccessRequest, getPendingRequests, resolveAccessRequest } from '../../db/queries/guests.js';
-import { getTasksSince } from '../../db/queries/taskQueue.js';
+import { getTasksSince, displayPrompt } from '../../db/queries/taskQueue.js';
 import { getLatestSession } from '../../db/queries/sessions.js';
 import { config } from '../../config.js';
 import type { Db } from '../../db/client.js';
@@ -335,7 +335,7 @@ export function setupGlobalCommands(bot: any, projectManager: ProjectManager, db
 
       lines.push(`*${name}* — ${ptasks.length} task(s)`);
       for (const t of ptasks.slice(-5)) {
-        const prompt = t.prompt.length > 60 ? t.prompt.slice(0, 60) + '…' : t.prompt;
+        const prompt = displayPrompt(t, 60);
         lines.push(`  ${statusIcon(t.status)} ${prompt}`);
       }
       if (ptasks.length > 5) lines.push(`  … and ${ptasks.length - 5} more`);

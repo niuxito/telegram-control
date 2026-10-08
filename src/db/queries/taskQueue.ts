@@ -4,6 +4,15 @@ import { taskQueue } from '../schema.js';
 
 export type Task = typeof taskQueue.$inferSelect;
 
+export const SECRET_PROMPT = '🔒 (secret)';
+
+/** The only way to show a task prompt to users: hides /secret tasks, optionally truncates. */
+export function displayPrompt(task: { prompt: string; secret?: boolean | null }, max?: number): string {
+  if (task.secret) return SECRET_PROMPT;
+  if (max === undefined || task.prompt.length <= max) return task.prompt;
+  return task.prompt.slice(0, max) + '…';
+}
+
 export function getPendingTasks(db: Db, projectId: number) {
   return db.select().from(taskQueue)
     .where(and(eq(taskQueue.projectId, projectId), eq(taskQueue.status, 'pending')))

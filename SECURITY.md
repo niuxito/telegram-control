@@ -14,7 +14,9 @@ Telegram Control gives an AI agent a shell on your machine and lets you drive it
 
 **Pairing grants ownership.** On first start the pairing code is printed only on the host (terminal or `journalctl`). Whoever sends `/setup <code>` becomes `OWNER_USER_ID`, so do not share it. The code changes on every start and wrong codes are ignored silently.
 
-**Guests are read-only.** Guests can only run status commands and press the project status button. Every other command and button is owner-only by default.
+**Guests are read-only, but they see task history.** Guests can only run status commands and press the project status button; every other command and button is owner-only by default. Those status commands show task prompts and agent output, so only invite people who may see your projects' work.
+
+**`/secret` hides the prompt, not the result.** A secret sent by DM is deleted from Telegram and its prompt is shown as `🔒 (secret)` in every command and in the API. It is still stored in plain text in the local database and passed to the agent, and the agent's reply is not redacted.
 
 **The HTTP API exposes project paths and live task output.** It listens on `127.0.0.1` by default. On any other interface it refuses to start without `API_KEY`. Put it behind TLS if you expose it beyond your machine.
 

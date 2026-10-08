@@ -62,7 +62,7 @@ export async function startApp(): Promise<void> {
       return;
     }
 
-    await session.queueTask(ctx.message.text);
+    await session.queueTask(ctx.message.text, { secret: true });
 
     // Confirm in the original project topic (without showing the secret)
     try {

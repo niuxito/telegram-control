@@ -4,7 +4,7 @@ import type { ProjectManager } from '../projects/ProjectManager.js';
 import type { Db } from '../db/client.js';
 import { getActiveProjects } from '../db/queries/projects.js';
 import { getLatestSession } from '../db/queries/sessions.js';
-import { getRecentTasks, getRunningTask, getPendingTasks } from '../db/queries/taskQueue.js';
+import { getRecentTasks, getRunningTask, getPendingTasks, displayPrompt } from '../db/queries/taskQueue.js';
 import { agentEvents } from './events.js';
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ function handleAgents(res: ServerResponse, projectManager: ProjectManager, db: D
         status: cs?.isProcessing() ? 'working' : (p.status === 'paused' ? 'paused' : 'idle'),
         currentTask: running ? {
           id: running.id,
-          prompt: running.prompt,
+          prompt: displayPrompt(running),
           startedAt: running.createdAt,
           liveOutput: cs?.getLiveOutput() ?? null,
         } : null,
@@ -107,12 +107,12 @@ function handleAgent(res: ServerResponse, id: number, projectManager: ProjectMan
       status: cs?.isProcessing() ? 'working' : (p.status === 'paused' ? 'paused' : 'idle'),
       currentTask: running ? {
         id: running.id,
-        prompt: running.prompt,
+        prompt: displayPrompt(running),
         startedAt: running.createdAt,
         liveOutput: cs?.getLiveOutput() ?? null,
       } : null,
       pendingCount: pending.length,
-      pendingTasks: pending.map(t => ({ id: t.id, prompt: t.prompt, createdAt: t.createdAt })),
+      pendingTasks: pending.map(t => ({ id: t.id, prompt: displayPrompt(t), createdAt: t.createdAt })),
       session: session ? {
         id: session.claudeSessionId,
         messageCount: session.messageCount,
@@ -122,7 +122,7 @@ function handleAgent(res: ServerResponse, id: number, projectManager: ProjectMan
     },
     recentTasks: recent.map(t => ({
       id: t.id,
-      prompt: t.prompt,
+      prompt: displayPrompt(t),
       status: t.status,
       costUsd: t.costUsd,
       createdAt: t.createdAt,
@@ -139,7 +139,7 @@ function handleAgentTasks(res: ServerResponse, id: number, db: Db): void {
   }
   json(res, tasks.map(t => ({
     id: t.id,
-    prompt: t.prompt,
+    prompt: displayPrompt(t),
     status: t.status,
     costUsd: t.costUsd,
     createdAt: t.createdAt,
@@ -160,7 +160,7 @@ function handleLive(res: ServerResponse, projectManager: ProjectManager, db: Db)
         agentName: p.name,
         running: running ? {
           id: running.id,
-          prompt: running.prompt,
+          prompt: displayPrompt(running),
           liveOutput: cs?.getLiveOutput() ?? null,
         } : null,
         pendingCount: pending.length,

@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from '../db/schema.js';
-import { runMigrations } from '../db/migrate.js';
+import { readMigrationFiles } from 'drizzle-orm/migrator';
+import { runMigrations, MIGRATIONS_FOLDER } from '../db/migrate.js';
+
+const MIGRATIONS = readMigrationFiles({ migrationsFolder: MIGRATIONS_FOLDER }).length;
 
 function open() {
   const sqlite = new Database(':memory:');
@@ -25,14 +28,14 @@ describe('runMigrations', () => {
       'projects', 'claude_sessions', 'task_queue', 'local_issues', 'schedules', 'access_requests',
       'guests', 'project_notes', 'ideas', 'idea_entries', 'topic_messages', 'notification_log', '__drizzle_migrations',
     ]));
-    expect(migrationCount(sqlite)).toBe(1);
+    expect(migrationCount(sqlite)).toBe(MIGRATIONS);
   });
 
   it('is idempotent', () => {
     const { sqlite, db } = open();
     runMigrations(db, sqlite);
     runMigrations(db, sqlite);
-    expect(migrationCount(sqlite)).toBe(1);
+    expect(migrationCount(sqlite)).toBe(MIGRATIONS);
   });
 
   it('baselines a legacy database without losing data', () => {
@@ -52,8 +55,10 @@ describe('runMigrations', () => {
 
     expect(columns(sqlite, 'projects')).toEqual(expect.arrayContaining(['wake_word', 'model', 'budget_usd', 'default_agent']));
     expect(columns(sqlite, 'claude_sessions')).toEqual(expect.arrayContaining(['checkpoint_baseline_cost_usd']));
+    // Later migrations run on top of the baseline
+    expect(columns(sqlite, 'task_queue')).toContain('secret');
     expect(tables(sqlite)).toEqual(expect.arrayContaining(['ideas', 'idea_entries', 'topic_messages', 'project_notes']));
     expect(sqlite.prepare(`SELECT name, default_agent FROM projects`).all()).toEqual([{ name: 'demo', default_agent: 'claude' }]);
-    expect(migrationCount(sqlite)).toBe(1);
+    expect(migrationCount(sqlite)).toBe(MIGRATIONS);
   });
 });

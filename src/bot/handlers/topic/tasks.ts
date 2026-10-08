@@ -1,6 +1,6 @@
 import type { Context } from 'grammy';
 import type { ProjectManager } from '../../../projects/ProjectManager.js';
-import { getRecentTasks, getPendingTasks, cancelPendingTasks, getTaskById } from '../../../db/queries/taskQueue.js';
+import { getRecentTasks, getPendingTasks, cancelPendingTasks, getTaskById, displayPrompt } from '../../../db/queries/taskQueue.js';
 import { insertTopicMessage, getRecentTopicMessages, buildConversationContext, resolveContextLimit } from '../../../db/queries/topicMessages.js';
 import { getAgent, runWithRouter } from '../../../agents/index.js';
 import { parsePrReference, truncateDiff, buildReviewPrompt, MAX_REVIEW_DIFF_CHARS } from './reviewHelpers.js';
@@ -177,7 +177,7 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
       return;
     }
     const lines = tasks.map(t =>
-      `• [${t.status}] ${t.prompt.slice(0, 50)}${t.prompt.length > 50 ? '...' : ''}`
+      `• [${t.status}] ${displayPrompt(t, 50)}`
     ).join('\n');
     await ctx.reply(`Recent Tasks:\n${lines}`);
   });
@@ -208,7 +208,7 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     const lines = tasks.map(t => {
       const icon = statusIcon[t.status] ?? '•';
       const date = t.createdAt ? new Date(t.createdAt).toISOString().slice(11, 16) : '';
-      const prompt = t.prompt.slice(0, 60) + (t.prompt.length > 60 ? '…' : '');
+      const prompt = displayPrompt(t, 60);
       const cost = t.costUsd ? ` $${t.costUsd.toFixed(4)}` : '';
       return `${icon} [${t.id}] ${date} ${prompt}${cost}`;
     }).join('\n');
@@ -235,7 +235,7 @@ export function setupTaskHandlers(bot: any, projectManager: ProjectManager, db: 
     const icon = statusIcon[task.status] ?? '•';
     const date = task.createdAt ? new Date(task.createdAt).toLocaleString() : '';
     const cost = task.costUsd ? `$${task.costUsd.toFixed(4)}` : 'n/a';
-    const header = `${icon} Task ${task.id} — ${task.status}\n${date} | cost: ${cost}\n\nPrompt: ${task.prompt}\n\n`;
+    const header = `${icon} Task ${task.id} — ${task.status}\n${date} | cost: ${cost}\n\nPrompt: ${displayPrompt(task)}\n\n`;
     const output = task.result ?? '(no output)';
     const full = header + output;
     if (full.length > 4096) {

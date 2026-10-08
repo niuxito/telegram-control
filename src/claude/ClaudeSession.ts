@@ -1,7 +1,7 @@
 import type { Db } from '../db/client.js';
 import { insertTopicMessage } from '../db/queries/topicMessages.js';
 import { getLatestSession, insertSession, updateSession } from '../db/queries/sessions.js';
-import { insertTask, updateTask, getRunningTask, getRunningTasksByProject, getPendingTasks } from '../db/queries/taskQueue.js';
+import { insertTask, updateTask, getRunningTask, getRunningTasksByProject, getPendingTasks, displayPrompt } from '../db/queries/taskQueue.js';
 import { getProjectById } from '../db/queries/projects.js';
 import { runCliTask } from './CliStrategy.js';
 import { runCodexTask } from './CodexStrategy.js';
@@ -97,11 +97,12 @@ export class ClaudeSession {
     return this.liveOutput;
   }
 
-  async queueTask(prompt: string): Promise<number> {
+  async queueTask(prompt: string, options: { secret?: boolean } = {}): Promise<number> {
     const task = insertTask(this.db, {
       projectId: this.projectId,
       prompt,
       status: 'pending',
+      secret: options.secret ?? false,
     });
     // Fire-and-forget: any rejection that escaped runTask's own try/catch is
     // logged here so it never surfaces as an unhandledRejection.
@@ -122,7 +123,7 @@ export class ClaudeSession {
 
         const task = pending[0];
         try {
-          await this.runTask(task.id, task.prompt);
+          await this.runTask(task.id, task.prompt, task.secret);
         } catch (err) {
           // runTask has its own catch, but defend against anything that slips through
           // (e.g. an error thrown before the inner try, or by the catch handler itself)
@@ -144,7 +145,7 @@ export class ClaudeSession {
     }
   }
 
-  private async runTask(taskId: number, prompt: string) {
+  private async runTask(taskId: number, prompt: string, secret = false) {
     // Circuit breaker: once a project has crossed its budget limit, refuse to
     // run further tasks (no CLI invocation, no cost) until the user raises or
     // removes the limit. Trips before "running" so a backlog of queued tasks
@@ -176,7 +177,7 @@ export class ClaudeSession {
 
     updateTask(this.db, taskId, { status: 'running' });
     this.liveOutput = '';
-    agentEvents.emit('agent', { type: 'task:started', agentId: this.projectId, agentName: this.projectName, taskId, prompt });
+    agentEvents.emit('agent', { type: 'task:started', agentId: this.projectId, agentName: this.projectName, taskId, prompt: displayPrompt({ prompt, secret }) });
 
     const session = getLatestSession(this.db, this.projectId);
 
@@ -716,7 +717,7 @@ export class ClaudeSession {
         result: note,
         completedAt: new Date(),
       });
-      const interruptedText = `❌ Task interrupted by bot restart.\n\nPrompt: ${task.prompt.slice(0, 200)}${task.prompt.length > 200 ? '…' : ''}\n\nUse /task to retry.`;
+      const interruptedText = `❌ Task interrupted by bot restart.\n\nPrompt: ${displayPrompt(task, 200)}\n\nUse /task to retry.`;
       try {
         if (task.liveMessageId) {
           await this.bot.api.editMessageText(this.chatId, task.liveMessageId, interruptedText);

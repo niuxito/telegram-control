@@ -43,6 +43,8 @@ export const taskQueue = sqliteTable('task_queue', {
   costUsd: real('cost_usd'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
+  // Sent through /secret: the prompt is never shown in chats or the API
+  secret: integer('secret', { mode: 'boolean' }).notNull().default(false),
 });
 
 export const localIssues = sqliteTable('local_issues', {
