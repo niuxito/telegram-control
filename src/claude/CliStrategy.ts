@@ -152,9 +152,12 @@ export async function runCliTask(options: CliRunOptions): Promise<CliRunResult> 
       }
 
       if (resultEvent) {
-        // If the result event already carries an error, also check stderr
-        if (!resultEvent.success && resultEvent.error) {
-          const combinedText = resultEvent.error + ' ' + stderrBuffer;
+        // Classify whenever the CLI itself reported failure, regardless of
+        // whether it gave us a message — an unclassified, message-less
+        // failure must still be treated as a failure downstream, never as a
+        // successful-but-empty response.
+        if (!resultEvent.success) {
+          const combinedText = (resultEvent.error ?? '') + ' ' + stderrBuffer;
           const errorType = classifyCliError(combinedText);
           resolve({ ...resultEvent, errorType });
         } else {

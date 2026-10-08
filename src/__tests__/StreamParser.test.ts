@@ -11,7 +11,7 @@ function makeAssistantLine(contentBlocks: unknown[]): string {
 }
 
 function makeResultLine(subtype: 'success' | 'error', opts: Record<string, unknown> = {}): string {
-  return JSON.stringify({ type: 'result', subtype, cost_usd: 0.01, session_id: 'ses1', result: 'done', ...opts });
+  return JSON.stringify({ type: 'result', subtype, total_cost_usd: 0.01, session_id: 'ses1', result: 'done', ...opts });
 }
 
 describe('parseLineDetailed', () => {
@@ -120,7 +120,7 @@ describe('parseLineDetailed', () => {
 
   describe('result success events', () => {
     it('parses a success result event', () => {
-      const line = makeResultLine('success', { cost_usd: 0.01, session_id: 'ses1', result: 'all done' });
+      const line = makeResultLine('success', { total_cost_usd: 0.01, session_id: 'ses1', result: 'all done' });
       const result = parseLineDetailed(line);
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
@@ -141,7 +141,7 @@ describe('parseLineDetailed', () => {
       }
     });
 
-    it('defaults costUsd to 0 when cost_usd is absent', () => {
+    it('defaults costUsd to 0 when total_cost_usd is absent', () => {
       const line = JSON.stringify({ type: 'result', subtype: 'success', session_id: 'x', result: '' });
       const [event] = parseLineDetailed(line);
       expect(event.type).toBe('result');
@@ -151,7 +151,7 @@ describe('parseLineDetailed', () => {
     });
 
     it('defaults sessionId to empty string when session_id is absent', () => {
-      const line = JSON.stringify({ type: 'result', subtype: 'success', cost_usd: 0, result: '' });
+      const line = JSON.stringify({ type: 'result', subtype: 'success', total_cost_usd: 0, result: '' });
       const [event] = parseLineDetailed(line);
       if (event.type === 'result') {
         expect(event.sessionId).toBe('');
@@ -171,11 +171,10 @@ describe('parseLineDetailed', () => {
     });
 
     it('sets error field from result field on error subtype', () => {
-      // Looking at the source: error field = obj.result when subtype === 'error'
       const line = JSON.stringify({
         type: 'result',
         subtype: 'error',
-        cost_usd: 0,
+        total_cost_usd: 0,
         session_id: 'ses2',
         result: 'Task timed out',
       });
@@ -184,6 +183,36 @@ describe('parseLineDetailed', () => {
       if (event.type === 'result') {
         expect(event.success).toBe(false);
         expect(event.error).toBe('Task timed out');
+      }
+    });
+
+    it('extracts the error message from an errors array (error_during_execution)', () => {
+      // Real CLI behavior when --resume targets a session ID it can't find:
+      // exit code 0, subtype 'error_during_execution', message in `errors[]`,
+      // no top-level `result`/`error` field at all.
+      const line = JSON.stringify({
+        type: 'result',
+        subtype: 'error_during_execution',
+        total_cost_usd: 0,
+        session_id: 'ses4',
+        errors: ['No conversation found with session ID: abc-123'],
+      });
+      const [event] = parseLineDetailed(line);
+      expect(event.type).toBe('result');
+      if (event.type === 'result') {
+        expect(event.success).toBe(false);
+        expect(event.error).toBe('No conversation found with session ID: abc-123');
+        expect(event.result).toBe('');
+      }
+    });
+
+    it('never returns an undefined error message for a non-success subtype', () => {
+      const line = JSON.stringify({ type: 'result', subtype: 'something_else', session_id: 'ses5' });
+      const [event] = parseLineDetailed(line);
+      expect(event.type).toBe('result');
+      if (event.type === 'result') {
+        expect(event.success).toBe(false);
+        expect(event.error).toBeTruthy();
       }
     });
   });

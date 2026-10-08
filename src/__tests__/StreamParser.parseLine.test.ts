@@ -17,7 +17,7 @@ function makeResultLine(
   return JSON.stringify({
     type: 'result',
     subtype,
-    cost_usd: 0.01,
+    total_cost_usd: 0.01,
     session_id: 'ses1',
     result: 'done',
     ...opts,
@@ -86,7 +86,7 @@ describe('parseLine', () => {
   describe('result success events', () => {
     it('parses a success result event with success: true', () => {
       const line = makeResultLine('success', {
-        cost_usd: 0.05,
+        total_cost_usd: 0.05,
         session_id: 'sess-ok',
         result: 'finished',
       });
@@ -110,7 +110,7 @@ describe('parseLine', () => {
       }
     });
 
-    it('defaults costUsd to 0 when cost_usd field is absent', () => {
+    it('defaults costUsd to 0 when total_cost_usd field is absent', () => {
       const line = JSON.stringify({
         type: 'result',
         subtype: 'success',
@@ -127,7 +127,7 @@ describe('parseLine', () => {
       const line = JSON.stringify({
         type: 'result',
         subtype: 'success',
-        cost_usd: 0,
+        total_cost_usd: 0,
         result: '',
       });
       const result = parseLine(line);
@@ -140,7 +140,7 @@ describe('parseLine', () => {
       const line = JSON.stringify({
         type: 'result',
         subtype: 'success',
-        cost_usd: 0,
+        total_cost_usd: 0,
         session_id: 'x',
       });
       const result = parseLine(line);
@@ -159,12 +159,11 @@ describe('parseLine', () => {
       expect(result).toMatchObject({ type: 'result', success: false });
     });
 
-    it('sets error field from error field (not result) on error subtype', () => {
-      // parseLine source: error: obj.subtype === 'error' ? obj.error : undefined
+    it('prefers the error field over result on error subtype', () => {
       const line = JSON.stringify({
         type: 'result',
         subtype: 'error',
-        cost_usd: 0,
+        total_cost_usd: 0,
         session_id: 'ses2',
         result: 'result text',
         error: 'the actual error message',
@@ -176,18 +175,33 @@ describe('parseLine', () => {
       }
     });
 
-    it('error is undefined when error field is absent and subtype is error', () => {
-      // obj.error is undefined → error: undefined
+    it('falls back to the result field when the error field is absent', () => {
       const line = JSON.stringify({
         type: 'result',
         subtype: 'error',
-        cost_usd: 0,
+        total_cost_usd: 0,
         session_id: 'ses3',
         result: 'fail',
       });
       const result = parseLine(line);
       if (result?.type === 'result') {
-        expect(result.error).toBeUndefined();
+        expect(result.error).toBe('fail');
+      }
+    });
+
+    it('extracts the error message from an errors array (error_during_execution)', () => {
+      const line = JSON.stringify({
+        type: 'result',
+        subtype: 'error_during_execution',
+        total_cost_usd: 0,
+        session_id: 'ses4',
+        errors: ['No conversation found with session ID: abc-123'],
+      });
+      const result = parseLine(line);
+      expect(result?.type).toBe('result');
+      if (result?.type === 'result') {
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('No conversation found with session ID: abc-123');
       }
     });
   });

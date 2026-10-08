@@ -398,6 +398,36 @@ export class ClaudeSession {
         return;
       }
 
+      // Any other failure (e.g. errorType 'unknown', or a classified type we
+      // don't special-case above) must still be reported as a failure — never
+      // fall through to the success-styled message below with an empty body,
+      // which looks like Claude silently "responded" with nothing.
+      if (!result.success) {
+        const sessionNotFound = /no conversation found with session id/i.test(result.error ?? '');
+        if (sessionNotFound && session) {
+          // The locally stored session ID doesn't exist anymore (e.g. lost or
+          // never persisted) — every future task would hit the exact same
+          // failure on --resume, so clear it and let the next task start fresh.
+          updateSession(this.db, session.id, { claudeSessionId: null });
+        }
+        const failureText = sessionNotFound
+          ? '⚠️ This project\'s Claude session was lost and could not be resumed.\n\n' +
+            'I\'ve reset it — resend your message and it will start a new session.'
+          : `❌ Claude task failed: ${result.error ?? 'unknown error'}`;
+
+        await editMessage(failureText, true);
+
+        updateTask(this.db, taskId, {
+          status: 'failed',
+          result: result.error ?? failureText,
+          costUsd: result.costUsd,
+          completedAt: new Date(),
+        });
+        this.liveOutput = '';
+        agentEvents.emit('agent', { type: 'task:failed', agentId: this.projectId, agentName: this.projectName, taskId });
+        return;
+      }
+
       console.log(`[ClaudeSession] Task ${taskId} completed. success=${result.success} cost=$${result.costUsd} resultLen=${result.result?.length ?? 0} accumulatedLen=${accumulatedText.length}`);
 
       // Build final message

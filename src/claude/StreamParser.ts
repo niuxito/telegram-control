@@ -25,6 +25,29 @@ export interface InitEvent {
 
 export type StreamEvent = AssistantTextChunk | ToolUseEvent | ResultEvent | InitEvent;
 
+// The CLI reports cost as `total_cost_usd`; `cost_usd` is kept as a fallback
+// in case an older CLI version (or a different subtype) still emits it.
+function extractCostUsd(obj: any): number {
+  return obj.total_cost_usd ?? obj.cost_usd ?? 0;
+}
+
+// The CLI uses several non-success subtypes (`error`, `error_during_execution`,
+// possibly others) and doesn't put the message in the same field for all of
+// them — `error` for some, `errors` (array) for others, `result` for others
+// still. Checking success via `subtype === 'success'` already works for all
+// of them; this just makes sure a failure is never reported with no message
+// at all, which upstream code relies on to tell a failure from a real (if
+// empty) successful response.
+function extractResultError(obj: any): string | undefined {
+  if (obj.subtype === 'success') return undefined;
+  if (typeof obj.error === 'string' && obj.error) return obj.error;
+  if (Array.isArray(obj.errors) && obj.errors.length) {
+    return obj.errors.filter((e: unknown) => typeof e === 'string').join('; ');
+  }
+  if (typeof obj.result === 'string' && obj.result) return obj.result;
+  return `Claude CLI returned subtype "${obj.subtype}"`;
+}
+
 export function parseLine(line: string): StreamEvent | null {
   if (!line.trim()) return null;
   try {
@@ -40,13 +63,14 @@ export function parseLine(line: string): StreamEvent | null {
     }
 
     if (obj.type === 'result') {
+      const success = obj.subtype === 'success';
       return {
         type: 'result',
-        success: obj.subtype === 'success',
-        costUsd: obj.cost_usd ?? 0,
+        success,
+        costUsd: extractCostUsd(obj),
         sessionId: obj.session_id ?? '',
-        result: obj.result ?? '',
-        error: obj.subtype === 'error' ? obj.error : undefined,
+        result: success ? (obj.result ?? '') : '',
+        error: extractResultError(obj),
       };
     }
 
@@ -73,13 +97,14 @@ export function parseLineDetailed(line: string): StreamEvent[] {
         }
       }
     } else if (obj.type === 'result') {
+      const success = obj.subtype === 'success';
       events.push({
         type: 'result',
-        success: obj.subtype === 'success',
-        costUsd: obj.cost_usd ?? 0,
+        success,
+        costUsd: extractCostUsd(obj),
         sessionId: obj.session_id ?? '',
-        result: obj.result ?? '',
-        error: obj.subtype === 'error' ? obj.result : undefined,
+        result: success ? (obj.result ?? '') : '',
+        error: extractResultError(obj),
       });
     }
 
