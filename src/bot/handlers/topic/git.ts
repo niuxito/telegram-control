@@ -3,7 +3,7 @@ import { InlineKeyboard } from 'grammy';
 import { InputFile } from 'grammy';
 import type { ProjectManager } from '../../../projects/ProjectManager.js';
 import { getPendingTasks } from '../../../db/queries/taskQueue.js';
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import { readdirSync, statSync } from 'fs';
 import path from 'path';
 import type { Db } from '../../../db/client.js';

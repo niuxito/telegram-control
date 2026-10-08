@@ -6,7 +6,6 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node --disable-warning=DEP0040 dist/index.js",
-    "start:pi": "NODE_ENV=production node --disable-warning=DEP0040 dist/index.js",
     "setup": "node --disable-warning=DEP0040 dist/index.js --check",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -23,7 +22,7 @@
     "drizzle-orm": "^0.45.3",
     "grammy": "^1.30.0",
     "node-cron": "^4.2.1",
-    "simple-git": "^3.27.0",
+    "simple-git": "^4.0.2",
     "zod": "^3.24.0"
   },
   "devDependencies": {

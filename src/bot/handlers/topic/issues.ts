@@ -5,7 +5,7 @@ import { getPendingTasks } from '../../../db/queries/taskQueue.js';
 import { insertLocalIssue, listLocalIssues, closeLocalIssue } from '../../../db/queries/localIssues.js';
 import { buildPlanningIssuePrompt } from '../agentIntent.js';
 import type { Db } from '../../../db/client.js';
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 
 const pendingIssueRequest = new Map<number, { projectId: number; description: string }>();
 

@@ -17,7 +17,7 @@ import { FileWatcher } from '../watchers/FileWatcher.js';
 import { GitWatcher } from '../watchers/GitWatcher.js';
 import { NotificationService } from '../notifications/NotificationService.js';
 import { scaffoldProject, expandPath } from './scaffold.js';
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import { config } from '../config.js';
 
 export class ProjectManager {
