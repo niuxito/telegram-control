@@ -23,7 +23,8 @@ WorkingDirectory=%h/telegram-control
 ExecStart=/usr/bin/env npm start
 Restart=always
 RestartSec=5
-Environment=NODE_ENV=production
+# No NODE_ENV=production: the bot does not use it and agents would inherit it,
+# making `npm install` in your projects skip devDependencies.
 # Agent CLIs installed under ~/.local/bin or ~/.npm-global/bin must be on PATH
 Environment=PATH=%h/.local/bin:%h/.npm-global/bin:%h/.opencode/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin
 
