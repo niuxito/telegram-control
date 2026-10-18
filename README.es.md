@@ -10,11 +10,26 @@ Trabajar con agentes de IA implicaba abrir un terminal, elegir el proyecto corre
 
 ## Cómo funciona
 
-- Cada proyecto vive en su propio tópico dentro de un supergrupo de Telegram.
-- Las tareas se encolan por proyecto y se procesan en orden, con historial, estado, coste y registro completo.
-- Motor de IA intercambiable por proyecto o por tarea: Claude, Codex u OpenCode, con sesiones persistentes para mantener contexto y controlar el coste.
-- Avisa en el tópico de los cambios de archivos y de los commits nuevos, y puede ejecutar tareas programadas por cron.
-- Revisa diffs y PRs, crea issues y hace checkpoints de sesión: resume el trabajo hecho y reinicia el contexto sin perder el hilo.
+**Trabajar**
+- Cada proyecto vive en su propio tópico. Un mensaje normal en el tópico es una tarea para ese proyecto. Se crean con `/new`, se clonan de GitHub con `/clone` o se importan con `/import`.
+- Las tareas se encolan por proyecto y se procesan en orden, con historial, estado, coste y registro completo (`/queue`, `/tasklist`, `/tasklog`).
+- Agente intercambiable por proyecto (`/setdefault`) o por tarea (`/codex`, `/opencode`): Claude Code, Codex u OpenCode, con sesiones persistentes para mantener el contexto y controlar el coste.
+- `/plan` prepara un plan antes de tocar código, `/issue` crea issues en GitHub y `/review` revisa el diff actual o un PR.
+- Los mensajes de voz se transcriben y se convierten en tareas (opcional, con `OPENAI_API_KEY`).
+
+**Controlar**
+- Presupuesto por proyecto con `/budget`: avisa al acercarse al límite y detiene las tareas al superarlo.
+- `/checkpoint` resume el trabajo hecho y reinicia el contexto sin perder el hilo.
+- `/costs` muestra el coste de todos los proyectos de un vistazo.
+
+**Automatizar**
+- Tareas programadas con expresiones cron (`/schedule add`) y la misma tarea en todos los proyectos con `/broadcast`.
+- Avisos en el tópico de los cambios de archivos y de los commits nuevos (`/watch`, `/gitwatch`).
+- `/github` crea el repo y lo sube; `/vercel deploy` despliega en Vercel tras pedir confirmación (o `/vercel preview`).
+
+**Compartir**
+- Invitados de solo lectura que ven el estado de los proyectos (`/guest`).
+- API HTTP con eventos en directo (SSE) para seguir a los agentes desde otras herramientas.
 
 ## Despliegue
 

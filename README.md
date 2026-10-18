@@ -10,15 +10,27 @@ Working with AI coding agents meant opening a terminal, picking the right projec
 
 ## Features
 
-- **One topic per project.** Plain messages in a project topic become tasks for that project.
+**Work**
+- **One topic per project.** Plain messages in a project topic become tasks for that project. Create projects with `/new`, clone a GitHub repo with `/clone` or import an existing folder with `/import`.
 - **Per-project task queue.** Tasks run in order, with history, status, cost and full logs (`/queue`, `/tasklist`, `/tasklog`).
-- **Pluggable agents.** Claude Code, Codex or OpenCode per project or per task, with persistent sessions to keep context and control cost.
-- **Session checkpoints.** Summarise the work done and reset the context without losing the thread.
-- **Reviews and issues.** Review the current diff or a PR, and create issues through a planning agent.
-- **Schedules.** Run a prompt on a cron expression.
-- **Notifications.** File changes and new git commits are reported in the project topic.
-- **Deploys from the chat.** Push to GitHub and deploy to Vercel without leaving Telegram.
-- **Guests.** Give other people read-only access to project status.
+- **Pluggable agents.** Claude Code, Codex or OpenCode per project (`/setdefault`) or per task (`/codex`, `/opencode`), with persistent sessions to keep context and control cost.
+- **Plan before coding.** `/plan` drafts a plan and `/issue` creates GitHub issues through a planning agent.
+- **Reviews.** `/review` reviews the current diff or a PR.
+- **Voice messages** are transcribed and become tasks (optional, needs `OPENAI_API_KEY`).
+
+**Control**
+- **Per-project budget.** `/budget` warns as you approach the limit and stops tasks once it's exceeded.
+- **Session checkpoints.** `/checkpoint` summarises the work done and resets the context without losing the thread.
+- **Costs across projects** at a glance with `/costs`.
+
+**Automate**
+- **Schedules.** Run a prompt on a cron expression (`/schedule add`).
+- **Broadcast.** Queue the same task in every active project (`/broadcast`).
+- **Notifications.** File changes and new git commits are reported in the project topic (`/watch`, `/gitwatch`).
+- **Deploys from the chat.** Create the GitHub repo and push (`/github`), deploy to Vercel (`/vercel deploy`, with confirmation, or `/vercel preview`).
+
+**Share**
+- **Guests.** Give other people read-only access to project status (`/guest`).
 - **HTTP + SSE API** to watch agents from other tools (see [API.md](API.md)).
 
 Send `/help` in the group for the full command list.
