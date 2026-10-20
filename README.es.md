@@ -1,8 +1,10 @@
+<p align="center"><img src="docs/logo.svg" width="96" height="96" alt="Telegram Control logo"></p>
+
 # Telegram Control
 
 Orquestador de agentes de IA controlado desde Telegram. Cada proyecto es un tópico de un supergrupo: envías un mensaje, un agente (Claude Code, Codex u OpenCode) trabaja en el repositorio, hace commit, puede desplegar y responde en el mismo tópico.
 
-[Read in English](README.md) · La documentación de instalación y configuración está en el README en inglés.
+[Web](https://www.alexisparron.com/telegram-control/) · [Read in English](README.md) · La documentación de instalación y configuración está en el README en inglés.
 
 ## Por qué existe
 

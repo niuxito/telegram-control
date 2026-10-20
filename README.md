@@ -1,8 +1,10 @@
+<p align="center"><img src="docs/logo.svg" width="96" height="96" alt="Telegram Control logo"></p>
+
 # Telegram Control
 
 An AI agent orchestrator you drive from Telegram. Every project is a topic in a Telegram supergroup: send a message, an agent (Claude Code, Codex or OpenCode) works on the repo, commits, can deploy, and reports back in the same topic.
 
-[Leer en español](README.es.md)
+[Website](https://www.alexisparron.com/telegram-control/) · [Leer en español](README.es.md)
 
 ## Why
 
