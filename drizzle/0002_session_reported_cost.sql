@@ -1,0 +1,1 @@
+ALTER TABLE `claude_sessions` ADD `reported_cost_usd` real;

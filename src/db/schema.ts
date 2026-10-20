@@ -30,6 +30,10 @@ export const claudeSessions = sqliteTable('claude_sessions', {
   // instead of the totals themselves, since those stay cumulative for /budget.
   checkpointBaselineCostUsd: real('checkpoint_baseline_cost_usd').notNull().default(0),
   checkpointBaselineMessageCount: integer('checkpoint_baseline_message_count').notNull().default(0),
+  // Last cumulative cost the Claude CLI reported for claudeSessionId. The CLI's
+  // total_cost_usd covers the whole session (it carries over on --resume), so
+  // a task's own cost is the difference with this value. Null = not known yet.
+  reportedCostUsd: real('reported_cost_usd'),
   lastUsedAt: integer('last_used_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 

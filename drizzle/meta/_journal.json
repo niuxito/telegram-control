@@ -15,6 +15,13 @@
       "when": 1791460400897,
       "tag": "0001_task_secret",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792494215892,
+      "tag": "0002_session_reported_cost",
+      "breakpoints": true
     }
   ]
 }

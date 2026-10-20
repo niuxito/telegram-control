@@ -1,4 +1,5 @@
 import type { Db } from '../db/client.js';
+import { taskCostFromCumulative } from './taskCost.js';
 import { insertTopicMessage } from '../db/queries/topicMessages.js';
 import { getLatestSession, insertSession, updateSession } from '../db/queries/sessions.js';
 import { insertTask, updateTask, getRunningTask, getRunningTasksByProject, getPendingTasks, displayPrompt } from '../db/queries/taskQueue.js';
@@ -332,6 +333,19 @@ export class ClaudeSession {
       clearInterval(heartbeatTimer);
       this.currentTaskController = null;
 
+      // The CLI reports the session's cumulative cost; turn it into this
+      // task's cost and remember the total for the next task.
+      const reportedTotalUsd = result.costUsd;
+      result.costUsd = taskCostFromCumulative(reportedTotalUsd, result.sessionId, session ? {
+        claudeSessionId: session.claudeSessionId,
+        reportedCostUsd: session.reportedCostUsd,
+        messageCount: session.messageCount,
+      } : undefined);
+      const sessionAfterRun = getLatestSession(this.db, this.projectId);
+      if (sessionAfterRun && result.sessionId) {
+        updateSession(this.db, sessionAfterRun.id, { reportedCostUsd: reportedTotalUsd });
+      }
+
       if (!result.success && result.errorType === 'auth_required') {
         const keyboard = new InlineKeyboard()
           .text('🧠 Switch default to Codex', `setdefault_codex:${this.projectId}`);
@@ -476,8 +490,9 @@ export class ClaudeSession {
       // Budget alert: check if total spend has crossed the project limit
       const project = getProjectById(this.db, this.projectId);
       if (project?.budgetUsd != null) {
+        // The session total was already updated with this task's cost above
         const updatedSession = getLatestSession(this.db, this.projectId);
-        const totalSpent = (updatedSession?.totalCostUsd ?? 0) + result.costUsd;
+        const totalSpent = updatedSession?.totalCostUsd ?? 0;
         const limit = project.budgetUsd;
         const pct = (totalSpent / limit) * 100;
 
